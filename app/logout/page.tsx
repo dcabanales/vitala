@@ -1,0 +1,1 @@
+export default function Logout(){return <main className="login-shell"><section className="panel login-card"><h1>Cerrar sesión</h1><p>Los registros permanecerán guardados en tu espacio.</p><form action="/api/auth/logout" method="post"><button className="btn primary full">Cerrar sesión</button></form><a className="btn light full" href="/">Volver a Vitala</a></section></main>}

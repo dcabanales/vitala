@@ -1,0 +1,14 @@
+node_modules/
+.next/
+*.tsbuildinfo
+.env*
+!.env.example
+.dev.vars
+.dev.vars.*
+data/
+backups/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+.fly/
+.DS_Store
