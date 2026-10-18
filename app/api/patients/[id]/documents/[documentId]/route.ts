@@ -16,8 +16,16 @@ export async function GET(req:Request,{params}:Context){try{
 }catch(e){return failure(e)}}
 export async function PATCH(request:Request,{params}:Context){try{
   const user=await requireUser(request),{id,documentId}=await params;await authorizePatient(user,id,true);
-  const req=await boundedRequest(request,4096),parsed=z.object({visibleToPatient:z.boolean()}).strict().safeParse(await req.json());if(!parsed.success)throw new Error('VALIDATION');
+  const req=await boundedRequest(request,4096),parsed=z.union([z.object({visibleToPatient:z.boolean()}).strict(),z.object({reviewed:z.literal(true)}).strict()]).safeParse(await req.json());if(!parsed.success)throw new Error('VALIDATION');
   const row=await transaction(async client=>{
+    if('reviewed' in parsed.data){
+      const doc=(await client.query("SELECT id FROM medical_documents WHERE patient_id=$1 AND id=$2 AND status='ready' AND archived_at IS NULL FOR UPDATE",[id,documentId])).rows[0];
+      if(!doc)throw Error('PATIENT');
+      if((await client.query("SELECT 1 FROM extraction_runs WHERE patient_id=$1 AND document_id=$2 AND status='running' AND created_at>now()-interval '3 minutes'",[id,documentId])).rowCount)throw Error('DOCUMENT_BUSY');
+      await client.query('UPDATE medical_documents SET reviewed_at=now(),reviewed_by=$3,updated_at=now() WHERE patient_id=$1 AND id=$2',[id,documentId,user.id]);
+      await client.query("INSERT INTO audit_events(actor_id,action,resource_type,resource_id,patient_id) VALUES($1,'mark_reviewed','document',$2,$3)",[user.id,documentId,id]);
+      return doc;
+    }
     const r=await client.query(`UPDATE medical_documents SET visible_to_patient=$3,updated_at=now()
       WHERE patient_id=$1 AND id=$2 AND status='ready' RETURNING id`,[id,documentId,parsed.data.visibleToPatient]);
     if(!r.rowCount)throw new Error('PATIENT');

@@ -1,3 +1,4 @@
+import {StatusLabel,RecordLabel} from '../../../components/status-label';
 import {DateMark} from '../../../components/reading';
 import {Icon} from '../../../components/health-icon';
 import {clinicalDate,friendlyDate} from '../../../lib/labels';
@@ -62,7 +63,7 @@ export default async function History({params,searchParams}:{params:Promise<{id:
       <button className="v-button v-secondary">Aplicar filtros</button></form>
     {!events.rowCount&&<div className="v-empty"><p>No hay eventos documentados para estos filtros.</p></div>}
     <div className="v-timeline">{events.rows.map(event=><Link href={href(event)} className="v-timeline-item" key={event.kind+event.id}>
-      <DateMark date={event.eventDate}/><div><small>{event.eventDate?friendlyDate(event.eventDate):'Fecha no documentada'} · {names[event.kind]}{event.withdrawn?' · Documento retirado':event.status==='draft'?' · Borrador':''}</small>
+      <DateMark date={event.eventDate}/><div><small>{event.eventDate?friendlyDate(event.eventDate):'Fecha no documentada'} · {names[event.kind]}</small><div className="v-labels">{event.withdrawn?<StatusLabel>Documento retirado</StatusLabel>:event.status==='draft'?<RecordLabel status={event.status}/>:null}</div>
       <h2>{event.title}</h2>{event.withdrawn&&<p className="v-muted">Retirado de la biblioteca. Se conserva esta referencia histórica.</p>}{event.specialty&&<p>{event.specialty}</p>}{event.detail&&<p className="v-muted v-line-clamp">{event.detail}</p>}</div><Icon name="arrow" size={18}/>
     </Link>)}</div>
   </main>;

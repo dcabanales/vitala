@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {createHash} from 'node:crypto';
 import assert from 'node:assert/strict';
 import {patientCreate,treatmentInput} from '../app/lib/schemas.ts';
 import {extractedConsultation,extractedExamination,analyzeMedicalDocument,identityMismatch} from '../app/lib/extraction.ts';
@@ -112,15 +113,18 @@ test('la explicación IA usa valores sin identidad y queda invalidada al corregi
  const exam={id:'e',version:1,name:'Química sanguínea',status:'published',patient_name:'NO ENVIAR',patient_id:'NO ENVIAR'};
  const measurements=[{id:'a',version:1,type_name:'Sanguínea',name_as_documented:'Colesterol',original_value:'148',numeric_value:'148',unit:'mg/dl',reference_range:'60 - 200',status:'published'}];
  const hash=examinationFingerprint(exam,measurements);
+ const legacyHash=createHash('sha256').update(JSON.stringify({exam:['id','version','name','event_date','indication','findings','conclusion','status'].map(k=>exam[k]??null),measurements:measurements.map(m=>['id','version','name_as_documented','type_name','original_value','numeric_value','unit','reference_range','status'].map(k=>m[k]??null))})).digest('hex');
+ assert.notEqual(hash,legacyHash,'las explicaciones antiguas deben regenerarse una vez');
  assert.notEqual(hash,examinationFingerprint(exam,[{...measurements[0],version:2,original_value:'149'}]));
  assert.notEqual(hash,examinationFingerprint(exam,[{...measurements[0],name_as_documented:'HDL'}]));
  assert.notEqual(hash,examinationFingerprint(exam,[]));
  const oldFetch=globalThis.fetch,oldKey=process.env.OPENAI_API_KEY;process.env.OPENAI_API_KEY='synthetic-only';
  try{globalThis.fetch=async(url,options)=>{
   const request=JSON.parse(options.body);assert.equal(request.store,false);assert.ok(!request.input.includes('NO ENVIAR'));assert.ok(request.input.includes('Colesterol'));assert.match(request.instructions,/No diagnostiques/);
-  return new Response(JSON.stringify({status:'completed',output:[{content:[{type:'output_text',text:JSON.stringify({findings:'Observación sintética',conclusion:'Resumen sintético',guidance:'Orientación sintética'})}]}]}),{status:200});
+  return new Response(JSON.stringify({status:'completed',output:[{content:[{type:'output_text',text:JSON.stringify({findings:'Observación sintética',conclusion:'Resumen sintético',guidance:''})}]}]}),{status:200});
  };
- assert.equal((await interpretExamination(exam,measurements,'synthetic-model')).findings,'Observación sintética');
+ const explanation=await interpretExamination(exam,measurements,'synthetic-model');
+ assert.equal(explanation.findings,'Observación sintética');assert.equal(explanation.guidance,'');
  globalThis.fetch=async()=>new Response(JSON.stringify({status:'completed',output:[{content:[{type:'output_text',text:'{"diagnosis":"inventado"}'}]}]}),{status:200});
  await assert.rejects(()=>interpretExamination(exam,measurements,'synthetic-model'),/AI_INVALID/);
  }finally{globalThis.fetch=oldFetch;if(oldKey===undefined)delete process.env.OPENAI_API_KEY;else process.env.OPENAI_API_KEY=oldKey}
