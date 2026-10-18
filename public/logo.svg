@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <title>Vitala</title>
+  <rect width="64" height="64" rx="18" fill="#215E51"/>
+  <path d="M14 17C25 17 31 27 31 46C20 41 14 31 14 17Z" fill="#FAF9F1"/>
+  <path d="M50 17C39 17 33 27 33 46C44 41 50 31 50 17Z" fill="#B9D2AC"/>
+</svg>
