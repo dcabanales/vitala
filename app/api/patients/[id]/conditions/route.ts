@@ -1,3 +1,4 @@
+import {recordDocumentsSql} from '../../../../lib/record-sources';
 import {requireUser,authorizePatient,failure,noCache,boundedRequest} from '../../../../lib/server';
 import {query,transaction} from '../../../../lib/db';
 import {z} from 'zod';
@@ -5,7 +6,7 @@ type Context={params:Promise<{id:string}>};
 const input=z.object({conditionId:z.string().uuid(),state:z.enum(['active','resolved','historical','unknown']).default('unknown'),certainty:z.enum(['confirmed','suspected','unknown']).default('unknown'),documentedDate:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),note:z.string().max(4000).nullish(),sourceNote:z.string().max(500).nullish(),documentId:z.string().uuid().nullish(),status:z.enum(['draft','published']).default('published')}).strict();
 export async function GET(req:Request,{params}:Context){try{
   const user=await requireUser(req),{id}=await params;await authorizePatient(user,id);
-  const r=await query(`SELECT pc.id,pc.condition_id AS "conditionId",pc.version,mc.name,pc.state,pc.certainty,pc.documented_date AS "documentedDate",pc.note,pc.source_note AS "sourceNote",pc.document_id AS "documentId",pc.status
+  const r=await query(`SELECT ${recordDocumentsSql('pc','condition')} AS documents,pc.id,pc.condition_id AS "conditionId",pc.version,mc.name,pc.state,pc.certainty,pc.documented_date AS "documentedDate",pc.note,pc.source_note AS "sourceNote",pc.document_id AS "documentId",pc.status
     FROM patient_conditions pc JOIN medical_conditions mc ON mc.id=pc.condition_id
     WHERE pc.patient_id=$1 AND pc.status<>'void' AND ($2='admin' OR pc.status='published') ORDER BY pc.documented_date DESC NULLS LAST,mc.name`,[id,user.role]);
   return Response.json({conditions:r.rows},{headers:noCache});

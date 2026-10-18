@@ -1,3 +1,4 @@
+import {recordDocumentsSql} from '../../../../lib/record-sources';
 import {requireUser,authorizePatient,failure,noCache,boundedRequest} from '../../../../lib/server';
 import {query,transaction} from '../../../../lib/db';
 import {z} from 'zod';
@@ -5,7 +6,7 @@ type Context={params:Promise<{id:string}>};
 const input=z.object({substance:z.string().trim().min(1).max(180),kind:z.enum(['allergy','intolerance']).default('allergy'),reaction:z.string().max(2000).nullish(),severity:z.string().max(120).nullish(),state:z.enum(['active','resolved','unknown']).default('unknown'),documentedDate:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),sourceNote:z.string().max(500).nullish(),documentId:z.string().uuid().nullish(),status:z.enum(['draft','published']).default('published')}).strict();
 export async function GET(req:Request,{params}:Context){try{
   const user=await requireUser(req),{id}=await params;await authorizePatient(user,id);
-  const r=await query(`SELECT id,version,substance,kind,reaction,severity,state,documented_date AS "documentedDate",source_note AS "sourceNote",document_id AS "documentId",status
+  const r=await query(`SELECT ${recordDocumentsSql('allergies','allergy')} AS documents,id,version,substance,kind,reaction,severity,state,documented_date AS "documentedDate",source_note AS "sourceNote",document_id AS "documentId",status
     FROM allergies WHERE patient_id=$1 AND status<>'void' AND ($2='admin' OR status='published') ORDER BY documented_date DESC NULLS LAST,substance`,[id,user.role]);
   return Response.json({allergies:r.rows},{headers:noCache});
 }catch(e){return failure(e)}}

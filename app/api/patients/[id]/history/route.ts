@@ -1,3 +1,4 @@
+import {recordDocumentsSql} from '../../../../lib/record-sources';
 import {requireUser,authorizePatient,failure,noCache,boundedRequest} from '../../../../lib/server';
 import {query,transaction} from '../../../../lib/db';
 import {z} from 'zod';
@@ -5,7 +6,7 @@ type Context={params:Promise<{id:string}>};
 const input=z.object({kind:z.enum(['surgery','hospitalization','personal','family','other']),title:z.string().trim().min(1).max(200),detail:z.string().max(4000).nullish(),documentedDate:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),familyRelation:z.string().max(120).nullish(),documentId:z.string().uuid().nullish(),status:z.enum(['draft','published']).default('published')}).strict();
 export async function GET(req:Request,{params}:Context){try{
   const user=await requireUser(req),{id}=await params;await authorizePatient(user,id);
-  const r=await query(`SELECT id,version,kind,title,detail,documented_date AS "documentedDate",family_relation AS "familyRelation",document_id AS "documentId",status
+  const r=await query(`SELECT ${recordDocumentsSql('medical_history_events','history')} AS documents,id,version,kind,title,detail,documented_date AS "documentedDate",family_relation AS "familyRelation",document_id AS "documentId",status
     FROM medical_history_events WHERE patient_id=$1 AND status<>'void' AND ($2='admin' OR status='published') ORDER BY documented_date DESC NULLS LAST,created_at DESC`,[id,user.role]);
   return Response.json({history:r.rows},{headers:noCache});
 }catch(e){return failure(e)}}

@@ -540,9 +540,11 @@ test('resumen en caché, invalidación por cambios y reporte sin resumen antiguo
   const text='Resumen sintético almacenado para verificar reutilización.';
   await pool.query("INSERT INTO patient_summaries(patient_id,source_hash,model,status,content,created_by) VALUES($1,$2,'synthetic','completed',$3,$4)",[patient,hash,text,actor]);
   const cached=await post(admin,`/api/patients/${patient}/summary`,{});assert.equal(cached.status,200,JSON.stringify(cached.body));assert.equal(cached.body.cached,true);
-  for(const path of ['', '/report']){const page=await request(admin,`/patients/${patient}${path}`);assert.equal(page.status,200);assert.ok(page.body.includes(text));}
+  const overview=await request(admin,`/patients/${patient}`);assert.equal(overview.status,200);assert.ok(overview.body.includes(text));
+  const report=await request(admin,`/patients/${patient}/report`);assert.equal(report.status,200);assert.ok(report.body.includes('Sustancia ficticia'));assert.ok(!report.body.includes(text),'el reporte no debe usar una narrativa global ajena a su selección');
   await pool.query("UPDATE allergies SET reaction='Nuevo dato relevante' WHERE patient_id=$1",[patient]);
-  for(const path of ['', '/report']){const page=await request(admin,`/patients/${patient}${path}`);assert.equal(page.status,200);assert.ok(page.body.includes('Hay datos nuevos'));assert.ok(!page.body.includes(text));}
+  const updatedOverview=await request(admin,`/patients/${patient}`);assert.ok(updatedOverview.body.includes('Hay datos nuevos'));assert.ok(!updatedOverview.body.includes(text));
+  const updatedReport=await request(admin,`/patients/${patient}/report`);assert.equal(updatedReport.status,200);assert.ok(updatedReport.body.includes('Nuevo dato relevante'));assert.ok(!updatedReport.body.includes(text));
   assert.equal((await pool.query('SELECT count(*)::int AS n FROM patient_summaries WHERE patient_id=$1',[patient])).rows[0].n,1);
  }finally{await pool.end()}
 });
@@ -820,5 +822,30 @@ test('revisar lectura guardada recupera una variante omitida por versión antigu
  assert.equal((await pool.query('SELECT count(*)::int n FROM measurements WHERE patient_id=$1',[f.patient])).rows[0].n,2);
  const receipt=(await request(admin,`/api/patients/${f.patient}/documents/${f.doc}/analyze`)).body.savedItems;assert.equal(receipt.length,2);
  assert.equal((await post(admin,`/api/patients/${randomUUID()}/documents/${f.doc}/reopen`,{})).status,404);
+ }finally{await pool.end()}
+});
+
+
+test('reporte seleccionable y fuentes: excluye retirados, conserva fuentes activas y registros manuales',{skip:!enabled||!localDb},async()=>{
+ const admin=client();await login(admin,email,password);const pool=new pg.Pool({connectionString:process.env.SMOKE_DATABASE_URL,max:1});
+ try{
+  const f=await withdrawalFixture(admin,pool);
+  for(const [endpoint,key] of [['conditions','conditions'],['allergies','allergies'],['history','history'],['treatments','treatments'],['medications','medications']]){
+   const r=await request(admin,`/api/patients/${f.patient}/${endpoint}`);assert.equal(r.status,200,JSON.stringify(r.body));assert.equal(r.body[key][0].documents[0].id,f.doc);assert.equal(r.body[key][0].documents[0].withdrawn,false);
+  }
+  let report=await request(admin,`/patients/${f.patient}/report`);assert.equal(report.status,200);assert.ok(report.body.includes('Dato ficticio condition'));assert.ok(!report.body.includes('Dato ficticio treatment'),'los tratamientos sin vigencia no se presentan como actuales');
+  report=await request(admin,`/patients/${f.patient}/report?care=all`);assert.ok(report.body.includes('Dato ficticio treatment'));
+  report=await request(admin,`/patients/${f.patient}/report?configured=1&sections=profile`);assert.equal(report.status,200);assert.ok(!report.body.includes('Dato ficticio condition'));assert.ok(!report.body.includes('Dato ficticio allergy'));
+  report=await request(admin,`/patients/${f.patient}/report?configured=1`);assert.ok(report.body.includes('Selecciona al menos una sección'));assert.ok(!report.body.includes('Dato ficticio condition'));
+  await pool.query("INSERT INTO allergies(patient_id,substance,kind,state,status) VALUES($1,'Alergia manual independiente','allergy','unknown','published')",[f.patient]);
+  const archive=await request(admin,`/api/patients/${f.patient}/documents/${f.doc}`,{method:'DELETE',headers:{origin:'null','x-csrf-token':await token(admin)}});assert.equal(archive.status,200);
+  report=await request(admin,`/patients/${f.patient}/report?care=all`);assert.equal(report.status,200);for(const name of ['condition','allergy','history','treatment','medication','examination','measurement'])assert.ok(!report.body.includes('Dato ficticio '+name),'No incluir fuente retirada: '+name);assert.ok(report.body.includes('Alergia manual independiente'));
+  const sources=(await request(admin,`/api/patients/${f.patient}/conditions`)).body.conditions[0].documents;assert.equal(sources[0].withdrawn,true);
+  const file=new FormData();file.append('file',new File(['%PDF-1.4\n'+randomUUID()+'\n%%EOF'],'otra-fuente.pdf',{type:'application/pdf'}));
+  const second=(await request(admin,`/api/patients/${f.patient}/documents`,{method:'POST',body:file,headers:{origin:'null','x-csrf-token':await token(admin)}})).body.document.id;
+  await pool.query("INSERT INTO consultation_import_records(patient_id,document_id,kind,name_key,resource_id,snapshot,created_by) SELECT patient_id,$2,kind,name_key,resource_id,snapshot,created_by FROM consultation_import_records WHERE document_id=$1 AND kind='condition'",[f.doc,second]);
+  report=await request(admin,`/patients/${f.patient}/report`);assert.equal(report.status,200);assert.ok(report.body.includes('Dato ficticio condition'));assert.ok(!report.body.includes('Dato ficticio allergy'));
+  await pool.query("UPDATE patient_conditions SET status='void' WHERE patient_id=$1",[f.patient]);
+  report=await request(admin,`/patients/${f.patient}/report`);assert.ok(!report.body.includes('Dato ficticio condition'));
  }finally{await pool.end()}
 });
