@@ -10,7 +10,7 @@ export async function GET(req:Request,{params}:Context){try{
     LEFT JOIN doctors d ON d.id=c.doctor_id LEFT JOIN medical_centers m ON m.id=c.center_id
     LEFT JOIN medical_specialties s ON s.id=c.specialty_id
     WHERE c.patient_id=$1 AND ($2='admin' OR c.status='published') AND c.status<>'void'
-    ORDER BY c.event_date DESC NULLS LAST,c.created_at DESC LIMIT 100`,[id,user.role]);
+    ORDER BY c.event_date DESC NULLS LAST,c.created_at DESC`,[id,user.role]);
   return Response.json({consultations:r.rows},{headers:noCache});
 }catch(e){return failure(e)}}
 export async function POST(request:Request,{params}:Context){try{

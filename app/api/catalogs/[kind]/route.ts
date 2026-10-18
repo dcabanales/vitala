@@ -9,7 +9,7 @@ const input=z.object({name:z.string().trim().min(1).max(200),active:z.boolean().
 export async function GET(req:Request,{params}:Context){try{
   await requireUser(req);const {kind}=await params,sqlTable=table(kind);
   const all=new URL(req.url).searchParams.get('all')==='1';
-  const result=await query(`SELECT * FROM ${sqlTable} WHERE active OR $1 ORDER BY name LIMIT 300`,[all]);
+  const result=await query(`SELECT * FROM ${sqlTable} WHERE active OR $1 ORDER BY name`,[all]);
   if(kind==='doctors'){
     const links=await query(`SELECT doctor_id,specialty_id,center_id FROM
       (SELECT doctor_id,specialty_id,NULL::uuid AS center_id FROM doctor_specialties UNION ALL

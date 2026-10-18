@@ -66,6 +66,17 @@ test('aislamiento A/B, invitación, revocación y vínculos clínicos', {skip:!e
   assert.equal(reusedInvite.status,400);
   await login(patient,`patient-${suffix}@example.test`,'synthetic-patient-password-123');
   assert.equal((await request(patient,`/api/patients/${a}`)).status,200);
+  const plan=(await post(admin,`/api/patients/${a}/treatments`,{requestKey:randomUUID(),name:'Plan de seguimiento ficticio',state:'active',status:'published'})).body.treatment;
+  assert.ok(plan?.id);
+  assert.equal((await post(patient,`/api/patients/${a}/care-followup`,{kind:'treatment',recordId:plan.id,state:'followed'})).status,200);
+  const planAfter=(await request(patient,`/api/patients/${a}/treatments`)).body.treatments.find(t=>t.id===plan.id);assert.equal(planAfter.followup,'followed');assert.equal(planAfter.state,'active');
+  assert.equal((await post(patient,`/api/patients/${b}/care-followup`,{kind:'treatment',recordId:plan.id,state:'not_followed'})).status,404);
+  assert.equal((await post(patient,`/api/patients/${a}/care-followup`,{kind:'medication',recordId:plan.id,state:'followed'})).status,404);
+  const privatePlan=(await post(admin,`/api/patients/${a}/treatments`,{requestKey:randomUUID(),name:'Plan privado ficticio',state:'unknown',status:'draft'})).body.treatment;
+  assert.equal((await post(patient,`/api/patients/${a}/care-followup`,{kind:'treatment',recordId:privatePlan.id,state:'followed'})).status,404);
+  assert.equal((await post(admin,`/api/patients/${a}/care-followup`,{kind:'treatment',recordId:plan.id,state:'not_followed'})).status,200);
+  assert.equal((await request(patient,`/api/patients/${a}/treatments`)).body.treatments.find(t=>t.id===plan.id).followup,'not_followed');
+
   assert.equal((await request(patient,`/api/patients/${b}`)).status,404);
   assert.equal((await request(patient,`/patients/${b}/report`)).status,404);
   assert.equal((await post(patient,`/api/patients/${a}/consultations`,{requestKey:randomUUID(),status:'published'})).status,404);
@@ -474,6 +485,12 @@ test('lectura general desde ambos accesos, complementos idempotentes y retirada 
   assert.equal((await confirm(run)).body[kind].alreadyConfirmed,true);
   assert.equal((await pool.query('SELECT count(*)::int AS n FROM consultation_import_records WHERE document_id=$1',[doc])).rows[0].n,7);
   assert.equal((await pool.query('SELECT state FROM patient_medications WHERE patient_id=$1',[patient])).rows[0].state,'completed');
+  const datedPlans=(await request(admin,`/api/patients/${patient}/treatments`)).body.treatments;
+  assert.ok(datedPlans.length);assert.ok(datedPlans.every(t=>t.sourceDate==='2026-10-18'&&t.startDate===null));
+  const datedMeds=(await request(admin,`/api/patients/${patient}/medications`)).body.medications;
+  assert.ok(datedMeds.every(m=>m.sourceDate==='2026-10-18'&&m.startDate===null));
+  const timeline=(await request(admin,`/patients/${patient}/history?kind=treatment`));assert.equal(timeline.status,200);assert.match(timeline.body,/18 oct 2026/);
+
   const detail=await request(admin,`/patients/${patient}/${kind==='consultation'?'consultations':'exams'}/${parent}`);assert.equal(detail.status,200);
   for(const r of records)assert.ok(detail.body.includes(r.name),'Debe mostrar '+r.name+' en '+kind);
   const receipt=(await request(admin,`/api/patients/${patient}/documents/${doc}/analyze`)).body.savedItems;assert.equal(receipt.length,7);

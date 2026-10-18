@@ -1,4 +1,5 @@
 'use client';
+import {PagedList} from '../components/paged-list';
 import {useCallback,useEffect,useState} from 'react';
 
 type Item={id:string;name:string;active:boolean;specialtyIds?:string[];centerIds?:string[];
@@ -48,16 +49,16 @@ export function CatalogManager(){
             <option value="components">Componentes</option></select></label>
           <label>Unidad por defecto<input name="defaultUnit" defaultValue={editing?.defaultUnit||''} maxLength={40} placeholder="Opcional"/></label></>}
         {kind==='centers'&&<label>País<input name="country" defaultValue={editing?.country||''} maxLength={100}/></label>}{kind==='doctors'&&<><label>Número de registro<input name="registration" defaultValue={editing?.registration||''} maxLength={100}/></label><label>Jurisdicción<input name="jurisdiction" defaultValue={editing?.jurisdiction||''} maxLength={100}/></label><div className="v-form-wide v-catalog-associations"><CatalogChoices label="Especialidades" name="specialtyIds" items={specialties} initial={editing?.specialtyIds||[]}/><CatalogChoices label="Centros médicos" name="centerIds" items={centers} initial={editing?.centerIds||[]}/></div></>}{kind==='medications'&&<><label>Principio activo<input name="activeIngredient" defaultValue={editing?.active_ingredient||''} maxLength={200}/></label><label>Fuente<input name="source" defaultValue={editing?.source||''} maxLength={500}/></label></>}{['medications','conditions'].includes(kind)&&<label className="v-form-wide">Descripción<textarea name="description" defaultValue={editing?.description||''} maxLength={3000}/></label>}<div className="v-form-actions"><button className="v-button" disabled={busy}>Guardar</button>{editing&&<button type="button" className="v-button v-secondary" onClick={()=>setEditing(null)}>Cancelar</button>}</div></form></section>
-    <section className="v-panel"><h2>{kinds.find(k=>k[0]===kind)?.[1]}</h2><div className="v-list">
+    <section className="v-panel"><h2>{kinds.find(k=>k[0]===kind)?.[1]}</h2><PagedList className="v-list">
       {items.map(item=><div className="v-catalog-row" key={item.id}><strong>{item.name}</strong>
         {measurementTypes&&<span>{categoryLabels[item.category||'']||item.category} · {valueLabels[item.valueKind||'']||item.valueKind}
           {item.defaultUnit?' · '+item.defaultUnit:''}</span>}
         <a href="#catalog-editor" className="v-link-button" onClick={()=>{setEditing(item);setNotice('')}}>Editar</a><span>{item.active?'Activo':'Inactivo'}</span><button type="button" className="v-link-button" disabled={busy}
           onClick={()=>void mutate({id:item.id,active:!item.active},'PATCH')}>{item.active?'Desactivar':'Activar'}</button></div>)}
-    </div>{!items.length&&<p className="v-muted">No hay registros.</p>}</section></>;
+    </PagedList>{!items.length&&<p className="v-muted">No hay registros.</p>}</section></>;
 }
 
 function CatalogChoices({label,name,items,initial}:{label:string;name:string;items:Item[];initial:string[]}){
  const [selected,setSelected]=useState(initial),[search,setSearch]=useState('');
- return <fieldset className="v-catalog-choices"><legend>{label}</legend><p>Selecciona una o varias opciones.</p><input aria-label={'Buscar en '+label.toLowerCase()} placeholder="Buscar…" value={search} onChange={e=>setSearch(e.target.value)}/>{selected.map(id=><input key={id} type="hidden" name={name} value={id}/>)}<div className="v-choice-list">{items.filter(i=>i.name.toLocaleLowerCase('es').includes(search.toLocaleLowerCase('es'))).map(i=><label key={i.id} className="v-choice"><input type="checkbox" checked={selected.includes(i.id)} onChange={e=>setSelected(current=>e.target.checked?[...current,i.id]:current.filter(id=>id!==i.id))}/><span>{i.name}</span></label>)}{!items.length&&<p>No hay opciones registradas.</p>}</div><small>{selected.length} seleccionadas</small></fieldset>;
+ return <fieldset className="v-catalog-choices"><legend>{label}</legend><p>Selecciona una o varias opciones.</p><input aria-label={'Buscar en '+label.toLowerCase()} placeholder="Buscar…" value={search} onChange={e=>setSearch(e.target.value)}/>{selected.map(id=><input key={id} type="hidden" name={name} value={id}/>)}<PagedList className="v-choice-list">{items.filter(i=>i.name.toLocaleLowerCase('es').includes(search.toLocaleLowerCase('es'))).map(i=><label key={i.id} className="v-choice"><input type="checkbox" checked={selected.includes(i.id)} onChange={e=>setSelected(current=>e.target.checked?[...current,i.id]:current.filter(id=>id!==i.id))}/><span>{i.name}</span></label>)}{!items.length&&<p>No hay opciones registradas.</p>}</PagedList><small>{selected.length} seleccionadas</small></fieldset>;
 }

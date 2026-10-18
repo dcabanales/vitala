@@ -20,7 +20,7 @@ export async function GET(req:Request,{params}:Context){try{
       OR (d.reviewed_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM extraction_runs x WHERE x.document_id=d.id AND x.patient_id=d.patient_id AND x.created_at>d.reviewed_at))) AS reviewed,
     d.status,COALESCE((SELECT CASE WHEN x.status='running' AND x.created_at<now()-interval '3 minutes' THEN 'interrupted' ELSE x.status END FROM extraction_runs x WHERE x.document_id=d.id AND x.patient_id=d.patient_id ORDER BY x.created_at DESC LIMIT 1),'uploaded') AS "processingStatus",d.visible_to_patient AS "visibleToPatient",d.document_date AS "documentDate",d.created_at AS "createdAt",s.name AS "specialtyName"
     FROM medical_documents d LEFT JOIN medical_specialties s ON s.id=d.specialty_id
-    WHERE d.patient_id=$1 AND (d.archived_at IS NOT NULL)=$4 AND ($2='admin' OR (d.visible_to_patient AND (d.status='ready' OR d.created_by=$3))) ORDER BY d.created_at DESC LIMIT 200`,[id,user.role,user.id,archived]);
+    WHERE d.patient_id=$1 AND (d.archived_at IS NOT NULL)=$4 AND ($2='admin' OR (d.visible_to_patient AND (d.status='ready' OR d.created_by=$3))) ORDER BY d.created_at DESC`,[id,user.role,user.id,archived]);
   return Response.json({documents:r.rows},{headers:noCache});
 }catch(e){return failure(e)}}
 export async function POST(request:Request,{params}:Context){try{

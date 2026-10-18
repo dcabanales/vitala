@@ -1,13 +1,14 @@
+import {sourceDateSql} from '../../../../lib/source-date';
 import {requireUser,authorizePatient,failure,noCache,boundedRequest} from '../../../../lib/server';
 import {query,transaction} from '../../../../lib/db';
 import {treatmentInput} from '../../../../lib/schemas';
 type Context={params:Promise<{id:string}>};
 export async function GET(req:Request,{params}:Context){try{
   const user=await requireUser(req),{id}=await params;await authorizePatient(user,id);
-  const r=await query(`SELECT t.id,t.name,t.indication,t.start_date AS "startDate",t.end_date AS "endDate",t.state,t.status,t.instructions,
+  const r=await query(`SELECT COALESCE((SELECT f.state FROM care_followup f WHERE f.patient_id=t.patient_id AND f.resource_id=t.id AND f.kind='treatment'),'unknown') AS followup,${sourceDateSql('t','treatment')} AS "sourceDate",t.id,t.name,t.indication,t.start_date AS "startDate",t.end_date AS "endDate",t.state,t.status,t.instructions,
     t.note,t.version,t.doctor_id AS "doctorId",COALESCE(d.name,t.doctor_as_documented) AS "doctorName" FROM treatments t LEFT JOIN doctors d ON d.id=t.doctor_id
     WHERE t.patient_id=$1 AND t.status<>'void' AND ($2='admin' OR t.status='published')
-    ORDER BY (t.state='active') DESC,t.start_date DESC NULLS LAST,t.created_at DESC LIMIT 100`,[id,user.role]);
+    ORDER BY (t.state='active') DESC,t.start_date DESC NULLS LAST,t.created_at DESC`,[id,user.role]);
   return Response.json({treatments:r.rows},{headers:noCache});
 }catch(e){return failure(e)}}
 export async function POST(request:Request,{params}:Context){try{

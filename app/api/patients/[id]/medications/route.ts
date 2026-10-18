@@ -1,3 +1,4 @@
+import {sourceDateSql} from '../../../../lib/source-date';
 import {requireUser,authorizePatient,failure,noCache,boundedRequest} from '../../../../lib/server';
 import {query,transaction} from '../../../../lib/db';
 import {reviseRecord} from '../../../../lib/record-revision';
@@ -6,7 +7,7 @@ type Context={params:Promise<{id:string}>};
 const input=z.object({medicationId:z.string().uuid(),treatmentId:z.string().uuid().nullish(),dose:z.string().max(200).nullish(),frequency:z.string().max(200).nullish(),route:z.string().max(120).nullish(),instructions:z.string().max(3000).nullish(),startDate:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),endDate:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),state:z.enum(['planned','active','completed','suspended','paused','unknown']).default('unknown'),documentId:z.string().uuid().nullish(),status:z.enum(['draft','published']).default('published')}).strict();
 export async function GET(req:Request,{params}:Context){try{
   const user=await requireUser(req),{id}=await params;await authorizePatient(user,id);
-  const r=await query(`SELECT pm.id,pm.version,pm.medication_id AS "medicationId",m.name,m.active_ingredient AS "activeIngredient",pm.treatment_id AS "treatmentId",pm.dose,pm.frequency,pm.route,pm.instructions,
+  const r=await query(`SELECT COALESCE((SELECT f.state FROM care_followup f WHERE f.patient_id=pm.patient_id AND f.resource_id=pm.id AND f.kind='medication'),'unknown') AS followup,${sourceDateSql('pm','medication')} AS "sourceDate",pm.id,pm.version,pm.medication_id AS "medicationId",m.name,m.active_ingredient AS "activeIngredient",pm.treatment_id AS "treatmentId",pm.dose,pm.frequency,pm.route,pm.instructions,
     pm.start_date AS "startDate",pm.end_date AS "endDate",pm.state,pm.status,pm.document_id AS "documentId"
     FROM patient_medications pm JOIN medications m ON m.id=pm.medication_id WHERE pm.patient_id=$1 AND pm.status<>'void' AND ($2='admin' OR pm.status='published')
     ORDER BY (pm.state='active') DESC,pm.start_date DESC NULLS LAST,m.name`,[id,user.role]);

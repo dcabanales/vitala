@@ -1,3 +1,5 @@
+import {sourceDateSql} from '../../../lib/source-date';
+import {PagedList} from '../../../components/paged-list';
 import {StatusLabel,RecordLabel} from '../../../components/status-label';
 import {DateMark} from '../../../components/reading';
 import {Icon} from '../../../components/health-icon';
@@ -9,7 +11,7 @@ import {authorizePatient} from '../../../lib/server';
 import {query} from '../../../lib/db';
 
 export const dynamic='force-dynamic';
-type Event={withdrawn:boolean;id:string;kind:string;title:string;detail:string|null;eventDate:string|null;specialty:string|null;status:string};
+type Event={sourceDated:boolean;withdrawn:boolean;id:string;kind:string;title:string;detail:string|null;eventDate:string|null;specialty:string|null;status:string};
 const names:Record<string,string>={consultation:'Consulta',examination:'Examen',treatment:'Tratamiento',history:'Antecedente',document:'Documento'};
 function dateParam(raw:string|undefined){return raw&&/^\d{4}-\d{2}-\d{2}$/.test(raw)&&!Number.isNaN(Date.parse(raw))?raw:null}
 export default async function History({params,searchParams}:{params:Promise<{id:string}>;searchParams:Promise<{kind?:string;from?:string;to?:string;specialty?:string}>}){
@@ -21,7 +23,7 @@ export default async function History({params,searchParams}:{params:Promise<{id:
   const from=dateParam(filters.from),to=dateParam(filters.to);
   const specialty=filters.specialty&&/^[0-9a-f-]{36}$/i.test(filters.specialty)?filters.specialty:null;
   const specialties=await query<{id:string;name:string}>('SELECT id,name FROM medical_specialties WHERE active ORDER BY name');
-  const events=await query<Event>(`SELECT id,kind,title,detail,event_date AS "eventDate",specialty,status,(kind='document' AND EXISTS(SELECT 1 FROM medical_documents removed WHERE removed.id=timeline.id AND removed.archived_at IS NOT NULL)) AS withdrawn FROM (
+  const events=await query<Event>(`SELECT (kind='treatment' AND EXISTS(SELECT 1 FROM treatments t WHERE t.id=timeline.id AND t.patient_id=$1 AND t.start_date IS NULL)) AS "sourceDated",id,kind,title,detail,event_date AS "eventDate",specialty,status,(kind='document' AND EXISTS(SELECT 1 FROM medical_documents removed WHERE removed.id=timeline.id AND removed.archived_at IS NOT NULL)) AS withdrawn FROM (
     SELECT c.id,'consultation'::text AS kind,'Consulta médica'::text AS title,
       COALESCE(NULLIF(c.summary,''),NULLIF(c.reason,'')) AS detail,c.event_date,
       COALESCE(s.name,c.specialty_as_documented) AS specialty,c.specialty_id,c.status,c.created_at
@@ -31,7 +33,7 @@ export default async function History({params,searchParams}:{params:Promise<{id:
       COALESCE(s.name,e.specialty_as_documented),e.specialty_id,e.status,e.created_at
       FROM examinations e LEFT JOIN medical_specialties s ON s.id=e.specialty_id WHERE e.patient_id=$1
     UNION ALL
-    SELECT t.id,'treatment',t.name,t.indication,t.start_date,NULL,NULL::uuid,t.status,t.created_at
+    SELECT t.id,'treatment',t.name,t.indication,COALESCE(t.start_date,${sourceDateSql('t','treatment')}),NULL,NULL::uuid,t.status,t.created_at
       FROM treatments t WHERE t.patient_id=$1
     UNION ALL
     SELECT h.id,'history',h.title,h.detail,h.documented_date,NULL,NULL::uuid,h.status,h.created_at
@@ -44,7 +46,7 @@ export default async function History({params,searchParams}:{params:Promise<{id:
   ) timeline WHERE status<>'void' AND ($2='admin' OR status='published')
     AND ($3::text IS NULL OR kind=$3) AND ($4::date IS NULL OR event_date>=$4)
     AND ($5::date IS NULL OR event_date<=$5) AND ($6::uuid IS NULL OR specialty_id=$6)
-    ORDER BY event_date DESC NULLS LAST,created_at DESC LIMIT 200`,
+    ORDER BY event_date DESC NULLS LAST,created_at DESC,id DESC`,
     [id,user.role,kind,from,to,specialty]);
   const href=(event:Event)=>{
     const root=`/patients/${id}`;
@@ -62,9 +64,9 @@ export default async function History({params,searchParams}:{params:Promise<{id:
       <label>Especialidad<select name="specialty" defaultValue={specialty||''}><option value="">Todas</option>{specialties.rows.map(s=><option value={s.id} key={s.id}>{s.name}</option>)}</select></label>
       <button className="v-button v-secondary">Aplicar filtros</button></form>
     {!events.rowCount&&<div className="v-empty"><p>No hay eventos documentados para estos filtros.</p></div>}
-    <div className="v-timeline">{events.rows.map(event=><Link href={href(event)} className="v-timeline-item" key={event.kind+event.id}>
-      <DateMark date={event.eventDate}/><div><small>{event.eventDate?friendlyDate(event.eventDate):'Fecha no documentada'} · {names[event.kind]}</small><div className="v-labels">{event.withdrawn?<StatusLabel>Documento retirado</StatusLabel>:event.status==='draft'?<RecordLabel status={event.status}/>:null}</div>
+    <PagedList className="v-timeline">{events.rows.map(event=><Link href={href(event)} className="v-timeline-item" key={event.kind+event.id}>
+      <DateMark date={event.eventDate}/><div><small>{event.eventDate?friendlyDate(event.eventDate)+(event.sourceDated?' · Fecha del documento':''):'Fecha no documentada'} · {names[event.kind]}</small><div className="v-labels">{event.withdrawn?<StatusLabel>Documento retirado</StatusLabel>:event.status==='draft'?<RecordLabel status={event.status}/>:null}</div>
       <h2>{event.title}</h2>{event.withdrawn&&<p className="v-muted">Retirado de la biblioteca. Se conserva esta referencia histórica.</p>}{event.specialty&&<p>{event.specialty}</p>}{event.detail&&<p className="v-muted v-line-clamp">{event.detail}</p>}</div><Icon name="arrow" size={18}/>
-    </Link>)}</div>
+    </Link>)}</PagedList>
   </main>;
 }

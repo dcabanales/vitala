@@ -15,7 +15,7 @@ export async function GET(req:Request,{params}:Context){try{const user=await req
       AND ($2='admin' OR (m.status='published'
         AND (m.examination_id IS NULL OR EXISTS(SELECT 1 FROM examinations e WHERE e.patient_id=m.patient_id AND e.id=m.examination_id AND e.status='published'))
         AND (m.consultation_id IS NULL OR EXISTS(SELECT 1 FROM consultations c WHERE c.patient_id=m.patient_id AND c.id=m.consultation_id AND c.status='published'))))
-    ORDER BY m.documented_date DESC NULLS LAST,m.created_at DESC LIMIT 300`,[id,user.role]);
+    ORDER BY m.documented_date DESC NULLS LAST,m.created_at DESC`,[id,user.role]);
   return Response.json({measurements:r.rows},{headers:noCache});
 }catch(e){return failure(e)}}
 export async function POST(request:Request,{params}:Context){try{const user=await requireUser(request),{id}=await params;await authorizePatient(user,id,true);

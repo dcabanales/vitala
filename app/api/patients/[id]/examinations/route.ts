@@ -8,7 +8,7 @@ export async function GET(req:Request,{params}:Context){try{const user=await req
     COALESCE(s.name,e.specialty_as_documented) AS "specialtyName",COALESCE(d.name,e.doctor_as_documented) AS "doctorName",COALESCE(m.name,e.center_as_documented) AS "centerName"
     FROM examinations e LEFT JOIN medical_specialties s ON s.id=e.specialty_id LEFT JOIN doctors d ON d.id=e.doctor_id
     LEFT JOIN medical_centers m ON m.id=e.center_id WHERE e.patient_id=$1 AND e.status<>'void' AND ($2='admin' OR e.status='published')
-    ORDER BY e.event_date DESC NULLS LAST,e.created_at DESC LIMIT 100`,[id,user.role]);
+    ORDER BY e.event_date DESC NULLS LAST,e.created_at DESC`,[id,user.role]);
   return Response.json({examinations:r.rows},{headers:noCache});
 }catch(e){return failure(e)}}
 export async function POST(request:Request,{params}:Context){try{const user=await requireUser(request),{id}=await params;await authorizePatient(user,id,true);

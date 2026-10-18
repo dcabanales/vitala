@@ -9,6 +9,7 @@ export async function resolveImportedMeasurementType(c:PoolClient,name:string,ki
 }
 export async function importConsultationRecords(c:PoolClient,args:{doctorId?:string|null;doctorName?:string|null;patientId:string;consultationId:string|null;examinationId?:string;documentId:string;actorId:string;date:string|null;records:ClinicalRecord[]}){
  const {patientId:p,consultationId:visit,documentId:doc,actorId:actor,date}=args;
+ if(date)await c.query('UPDATE medical_documents SET document_date=COALESCE(document_date,$3::date) WHERE patient_id=$1 AND id=$2',[p,doc,date]);
  const phaseLabels={administered:'Administrado durante la atención',discharge:'Indicado al alta; vigencia actual no establecida',current:'Uso documentado en la fecha de la consulta',historical:'Antecedente documentado',unknown:'Vigencia no documentada'};
  const prior=(await c.query('SELECT kind,snapshot FROM consultation_import_records WHERE patient_id=$1 AND document_id=$2',[p,doc])).rows;
  const confirmed=(await c.query("SELECT draft FROM extraction_runs WHERE patient_id=$1 AND document_id=$2 AND status='confirmed'",[p,doc])).rows;

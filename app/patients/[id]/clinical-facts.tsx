@@ -1,4 +1,7 @@
 'use client';
+import {SectionTabs} from '../../components/section-tabs';
+import {PagedList} from '../../components/paged-list';
+import {groupRecords} from '../../lib/group-records';
 import {StatusLabel,RecordLabel} from '../../components/status-label';
 import {ArchiveRecord} from '../../components/archive-record';
 import {useCallback,useEffect,useState} from 'react';
@@ -34,8 +37,8 @@ export function ClinicalFacts({patientId,role}:{patientId:string;role:'admin'|'p
   setEditor(null);setNotice('Registro guardado.');await load();router.refresh();
  }catch(e){setError(e instanceof Error?e.message:'No se pudo guardar')}finally{setBusy(false)}}
  return <>{error&&<div className="error" role="alert">{error} {!editor&&<button className="v-link-button" onClick={()=>{setError('');void load()}}>Reintentar carga</button>}</div>}{notice&&<p role="status" className="success">{notice}</p>}
- {sections.map(section=>{const active=editor?.kind===section.kind,p=active?editor?.item:undefined;
- return <section className="v-panel" key={section.kind} id={section.kind==='history'?'antecedentes':section.kind}><div className="v-section-head"><h2>{section.title}</h2>{role==='admin'&&!active&&<button type="button" className="v-button v-secondary" disabled={loading} onClick={()=>open(section.kind)}>{section.action}</button>}</div>
+ <SectionTabs sections={sections.map(section=>{const active=editor?.kind===section.kind,p=active?editor?.item:undefined;
+ return {id:section.kind==='history'?'antecedentes':section.kind,label:section.title,content:<section className="v-panel" key={section.kind} id={section.kind==='history'?'antecedentes':section.kind}><div className="v-section-head"><h2>{section.title}</h2>{role==='admin'&&!active&&<button type="button" className="v-button v-secondary" disabled={loading} onClick={()=>open(section.kind)}>{section.action}</button>}</div>
  {active&&<form className="v-form v-editing" onSubmit={save} key={p?.id||'new'} aria-label={(p?'Editar ':'Nueva ')+section.singular}>
  <h3 className="v-form-wide">{p?'Editar':'Registrar'} {section.singular}</h3>
  {section.kind==='conditions'&&<>
@@ -52,7 +55,9 @@ export function ClinicalFacts({patientId,role}:{patientId:string;role:'admin'|'p
  {p&&<label className="v-form-wide">Motivo de la corrección<input name="changeReason" required maxLength={500}/></label>}
  <div className="v-form-actions"><button className="v-button" disabled={busy}>{busy?'Guardando…':'Guardar '+section.singular}</button><button className="v-button v-secondary" type="button" disabled={busy} onClick={()=>setEditor(null)}>Cancelar</button></div>
  </form>}
- {loading?<p role="status" className="v-empty-inline">Cargando información…</p>:items[section.kind].length?items[section.kind].map(item=><article className="v-clinical-row" key={item.id}><div className="v-section-head"><strong>{item.name||item.substance||item.title}</strong>{role==='admin'&&<button className="v-link-button" onClick={()=>open(section.kind,item)} aria-label={'Editar '+(item.name||item.substance||item.title)}>Editar</button>}</div>
- {item.state&&<div className="v-labels"><StatusLabel tone={item.state==='active'?'info':'neutral'}>{conditionStateLabel(item.state)}</StatusLabel>{item.certainty&&<StatusLabel tone={item.certainty==='suspected'?'warning':'neutral'}>{item.certainty==='confirmed'?'Confirmada':item.certainty==='suspected'?'Sospecha':'Certeza no documentada'}</StatusLabel>}</div>}{item.status==='draft'&&<RecordLabel status="draft"/>}{item.reaction&&<p>Reacción: {item.reaction}</p>}{item.severity&&<p>Gravedad: {item.severity}</p>}{(item.note||item.detail)&&<p>{item.note||item.detail}</p>}<small>{clinicalDate(item.documentedDate)||'Fecha no documentada'}{item.sourceNote?' · '+item.sourceNote:''}</small>{role==='admin'&&<ArchiveRecord endpoint={`/api/patients/${patientId}/${section.kind}`} payload={{id:item.id,version:item.version}} onSaved={()=>{void load();router.refresh()}}/>}</article>):<p className="v-empty-inline">No hay {section.title.toLowerCase()} registrados.</p>}
- </section>})}</>;
+ {loading?<p role="status" className="v-empty-inline">Cargando información…</p>:items[section.kind].length?<PagedList>{groupRecords(items[section.kind],item=>[item.name||item.substance||item.title,item.kind==='family'?item.familyRelation:''].filter(Boolean).join(' · ')).map(group=><FactGroup key={group.label} label={group.label} count={group.items.length}>{group.items.map(item=><article className="v-clinical-row" key={item.id}><div className="v-section-head"><strong>{item.name||item.substance||item.title}</strong>{role==='admin'&&<button className="v-link-button" onClick={()=>open(section.kind,item)} aria-label={'Editar '+(item.name||item.substance||item.title)}>Editar</button>}</div>
+ {item.state&&<div className="v-labels"><StatusLabel tone={item.state==='active'?'info':'neutral'}>{conditionStateLabel(item.state)}</StatusLabel>{item.certainty&&<StatusLabel tone={item.certainty==='suspected'?'warning':'neutral'}>{item.certainty==='confirmed'?'Confirmada':item.certainty==='suspected'?'Sospecha':'Certeza no documentada'}</StatusLabel>}</div>}{item.status==='draft'&&<RecordLabel status="draft"/>}{item.reaction&&<p>Reacción: {item.reaction}</p>}{item.severity&&<p>Gravedad: {item.severity}</p>}{(item.note||item.detail)&&<p>{item.note||item.detail}</p>}<small>{clinicalDate(item.documentedDate)||'Fecha no documentada'}{item.sourceNote?' · '+item.sourceNote:''}</small>{role==='admin'&&<ArchiveRecord endpoint={`/api/patients/${patientId}/${section.kind}`} payload={{id:item.id,version:item.version}} onSaved={()=>{void load();router.refresh()}}/>}</article>)}</FactGroup>)}</PagedList>:<p className="v-empty-inline">No hay {section.title.toLowerCase()} registrados.</p>}
+ </section>}})}/> </>;
 }
+
+function FactGroup({label,count,children}:{label:string;count:number;children:React.ReactNode}){return count===1?<>{children}</>:<details className="v-grouped-records"><summary>{label} <StatusLabel>{count} registros · ver fechas y detalles</StatusLabel></summary>{children}</details>}
