@@ -1,3 +1,4 @@
+import {measurementIdentity,normalizeImported} from '../../../../../../lib/import-identity';
 import {completeCareTask} from '../../../../../../lib/complete-care-task';
 import {requireUser,authorizePatient,failure,noCache,boundedRequest} from '../../../../../../lib/server';
 import {transaction} from '../../../../../../lib/db';
@@ -88,10 +89,16 @@ export async function POST(request:Request,{params}:Context){try{
     examinationId=exam.rows[0].id;
     await client.query('INSERT INTO examination_documents(patient_id,examination_id,document_id) VALUES($1,$2,$3)',[id,examinationId,run.document_id]);
     }
+    const priorResults=(await client.query('SELECT name_as_documented,original_value,numeric_value::text,unit,reference_range,status FROM measurements WHERE patient_id=$1 AND examination_id=$2 AND document_id=$3',[id,examinationId,run.document_id])).rows;
+    const confirmedDrafts=(await client.query("SELECT draft FROM extraction_runs WHERE patient_id=$1 AND document_id=$2 AND status='confirmed' AND kind='examination'",[id,run.document_id])).rows;
+    const knownResults=new Set(confirmedDrafts.flatMap(r=>(r.draft?.measurements||[]).map((m:{typeName:string;originalValue:string;numericValue:string|null;unit:string|null;referenceRange:string|null})=>measurementIdentity(m))));
+    const seenResults=new Set(priorResults.map(m=>measurementIdentity({name:m.name_as_documented,originalValue:m.original_value,numericValue:m.numeric_value,unit:m.unit,referenceRange:m.reference_range})));
     for(let index=0;index<selected.length;index++){
       const m=p.measurements[index],kind=m.numericValue!==null?'number':'text';
       const typeId=selected[index]||await resolveImportedMeasurementType(client,m.typeName,kind);
-      if(run.examination_id&&(await client.query("SELECT 1 FROM measurements WHERE patient_id=$1 AND examination_id=$2 AND document_id=$3 AND lower(name_as_documented)=lower($4)",[id,examinationId,run.document_id,m.typeName])).rowCount)continue;
+      const identity=measurementIdentity(m);if(seenResults.has(identity))continue;
+      if(!knownResults.has(identity)&&priorResults.some(old=>normalizeImported(old.name_as_documented)===normalizeImported(m.typeName)))throw Error('IMPORT_CONFLICT:'+m.typeName);
+      seenResults.add(identity);
       const t=await client.query('SELECT value_kind FROM measurement_types WHERE id=$1 AND active FOR SHARE',[typeId]);
       if(t.rows[0]?.value_kind!==kind)throw new Error('VALIDATION');
       await client.query(`INSERT INTO measurements(patient_id,type_id,examination_id,document_id,documented_date,value_kind,
@@ -99,7 +106,7 @@ export async function POST(request:Request,{params}:Context){try{
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'published',$12,$13)`,
         [id,typeId,examinationId,run.document_id,p.eventDate,kind,m.numericValue,kind==='text'?m.originalValue:null,m.originalValue,m.unit,m.referenceRange,user.id,m.typeName]);
     }
-    await importConsultationRecords(client,{patientId:id,consultationId:null,examinationId:examinationId!,documentId:run.document_id,actorId:user.id,date:p.eventDate,records:p.clinicalRecords||[]});
+    await importConsultationRecords(client,{patientId:id,consultationId:null,examinationId:examinationId!,documentId:run.document_id,actorId:user.id,date:p.eventDate,records:(p.clinicalRecords||[]).filter(r=>r.kind!=='measurement'||!seenResults.has(measurementIdentity(r)))});
     await completeCareTask(client,id,run.document_id,'examination',examinationId!,user.id);
     await client.query(`UPDATE extraction_runs SET status='confirmed',reviewed_by=$2,examination_id=$3,draft=$4,finished_at=now() WHERE id=$1`,
       [runId,user.id,examinationId,p]);

@@ -1,3 +1,4 @@
+import {savedClinicalItems} from '../../../../../../lib/saved-clinical-items';
 import {requireUser,authorizePatient,failure,noCache,boundedRequest} from '../../../../../../lib/server';
 import {query,transaction} from '../../../../../../lib/db';
 import {getObject} from '../../../../../../lib/objects';
@@ -13,7 +14,8 @@ export async function GET(req:Request,{params}:Context){try{
     FROM extraction_runs WHERE patient_id=$1 AND document_id=$2 ORDER BY created_at DESC LIMIT 20`,[id,documentId]);
   const patient=(await query<{name:string;birthDate:string|null}>('SELECT name,birth_date AS "birthDate" FROM patients WHERE id=$1',[id])).rows[0];
   const careTask=(await query('SELECT kind FROM care_tasks WHERE patient_id=$1 AND document_id=$2',[id,documentId])).rows[0]||null;
-  return Response.json({careTask,runs:r.rows.map(run=>({...run,identityIssues:identityIssues(run.originalDraft||run.draft||{},patient)}))},{headers:noCache});
+  const savedItems=await savedClinicalItems(id,user.role,{documentId},true);
+  return Response.json({savedItems,careTask,runs:r.rows.map(run=>({...run,identityIssues:identityIssues(run.originalDraft||run.draft||{},patient)}))},{headers:noCache});
 }catch(e){return failure(e)}}
 export async function POST(request:Request,{params}:Context){try{
   const user=await requireUser(request),{id,documentId}=await params;await authorizePatient(user,id,true);
@@ -38,9 +40,8 @@ export async function POST(request:Request,{params}:Context){try{
     if((await client.query("SELECT 1 FROM extraction_runs WHERE patient_id=$1 AND document_id=$2 AND status='running'",[id,documentId])).rowCount)throw Error('AI_DOCUMENT_BUSY');
     if(previous?.status==='confirmed'&&previous.purpose!==parsed.data.purpose)throw Error('CONFLICT');
     if((previous?.status==='confirmed'&&!parsed.data.replaceReview)||(previous?.status==='review'&&!parsed.data.replaceReview))throw Error('CONFLICT');
-    const count=await client.query(`SELECT count(*) FILTER(WHERE created_at>now()-interval '24 hours')::int AS daily,
+    const count=await client.query(`SELECT
       count(*) FILTER(WHERE status='running')::int AS running FROM extraction_runs`);
-    if(count.rows[0].daily>=20)throw new Error('AI_BUDGET');
     if(count.rows[0].running>=2)throw new Error('AI_BUSY');
     const r=await client.query(`INSERT INTO extraction_runs(patient_id,document_id,kind,status,model,schema_version,created_by,consultation_id,examination_id,purpose)
       VALUES($1,$2,$3,'running',$4,2,$5,$6,$7,$8) RETURNING id`,[id,documentId,kind,model,user.id,previous?.consultation_id||null,previous?.examination_id||null,parsed.data.purpose]);

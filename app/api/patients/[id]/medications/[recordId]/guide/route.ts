@@ -18,8 +18,8 @@ export async function POST(req:Request,{params}:Context){let runId:string|undefi
   if(!process.env.OPENAI_API_KEY)throw Error('AI_CONFIG');
   await c.query("UPDATE medication_guides SET status='failed',finished_at=now() WHERE status='running' AND created_at<now()-interval '3 minutes'");
   if((await c.query("SELECT 1 FROM medication_guides WHERE medication_id=$1 AND status='running'",[med.id])).rowCount)throw Error('GUIDE_BUSY');
-  const count=(await c.query("SELECT count(*) FILTER(WHERE created_at>now()-interval '24 hours')::int AS daily,count(*) FILTER(WHERE status='running')::int AS running FROM medication_guides")).rows[0];
-  if(count.daily>=20)throw Error('AI_BUDGET');if(count.running>=2)throw Error('GUIDE_BUSY');
+  const count=(await c.query("SELECT count(*) FILTER(WHERE status='running')::int AS running FROM medication_guides")).rows[0];
+  if(count.running>=2)throw Error('GUIDE_BUSY');
   runId=(await c.query("INSERT INTO medication_guides(medication_id,source_hash,model,status,created_by) VALUES($1,$2,$3,'running',$4) RETURNING id",[med.id,hash,model,user.id])).rows[0].id;return null;
  });
  if(cached)return Response.json({guide:cached,cached:true},{headers:noCache});

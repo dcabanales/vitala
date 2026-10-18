@@ -461,6 +461,10 @@ test('lectura general desde ambos accesos, complementos idempotentes y retirada 
   assert.equal((await confirm(run)).body[kind].alreadyConfirmed,true);
   assert.equal((await pool.query('SELECT count(*)::int AS n FROM consultation_import_records WHERE document_id=$1',[doc])).rows[0].n,7);
   assert.equal((await pool.query('SELECT state FROM patient_medications WHERE patient_id=$1',[patient])).rows[0].state,'completed');
+  const detail=await request(admin,`/patients/${patient}/${kind==='consultation'?'consultations':'exams'}/${parent}`);assert.equal(detail.status,200);
+  for(const r of records)assert.ok(detail.body.includes(r.name),'Debe mostrar '+r.name+' en '+kind);
+  const receipt=(await request(admin,`/api/patients/${patient}/documents/${doc}/analyze`)).body.savedItems;assert.equal(receipt.length,7);
+  assert.ok(receipt.every(x=>x.status==='published'));
   const reread=await insert(parent);assert.equal((await confirm(reread)).status,200);
   assert.equal((await pool.query('SELECT count(*)::int AS n FROM consultation_import_records WHERE document_id=$1',[doc])).rows[0].n,7);
   assert.equal((await pool.query('SELECT name_as_documented FROM measurements WHERE patient_id=$1',[patient])).rows[0].name_as_documented,'Ficticio measurement');
@@ -729,5 +733,62 @@ test('retirada de examen incluye resultados y restauración no crea nuevas medic
  assert.equal((await pool.query('SELECT status FROM measurements WHERE patient_id=$1',[patient])).rows[0].status,'void');
  assert.equal((await post(admin,url,{action:'restore'})).status,200);
  const rows=(await pool.query('SELECT status FROM measurements WHERE patient_id=$1',[patient])).rows;assert.equal(rows.length,1);assert.equal(rows[0].status,'published');
+ await pool.query('UPDATE extraction_runs SET measurement_type_ids=$2 WHERE id=$1',[run,JSON.stringify([null])]);
+ const reopened=await post(admin,`/api/patients/${patient}/documents/${doc}/reopen`,{});assert.equal(reopened.status,200,JSON.stringify(reopened.body));
+ assert.deepEqual((await pool.query('SELECT measurement_type_ids FROM extraction_runs WHERE id=$1',[reopened.body.runId])).rows[0].measurement_type_ids,[null]);
+ assert.equal((await post(admin,`/api/patients/${patient}/extractions/${reopened.body.runId}/confirm`,{draft,measurementTypeIds:[null]})).status,200);
+ assert.equal((await pool.query('SELECT count(*)::int n FROM measurements WHERE patient_id=$1',[patient])).rows[0].n,1);
+ }finally{await pool.end()}
+});
+
+test('propuestas con igual nombre y distinto valor se guardan completas; relectura no duplica y conflicto no omite',{skip:!enabled||!localDb},async()=>{
+ const admin=client();await login(admin,email,password);const pool=new pg.Pool({connectionString:process.env.SMOKE_DATABASE_URL,max:1});
+ try{
+ const common={kind:'measurement',name:'Resultado repetido ficticio',detail:'Dato documentado',phase:'unknown',certainty:'confirmed',unit:'U/L',referenceRange:null,dose:null,frequency:null,route:null,evidence:'Cita ficticia',page:'1'};
+ const one={...common,originalValue:'12 U/L',numericValue:'12'},two={...common,originalValue:'18 U/L',numericValue:'18'};
+ const f=await withdrawalFixture(admin,pool,{records:[one,two,{...one}]}),visit=(await pool.query('SELECT consultation_id FROM extraction_runs WHERE id=$1',[f.run])).rows[0].consultation_id;
+ let rows=(await pool.query('SELECT original_value FROM measurements WHERE patient_id=$1 ORDER BY original_value',[f.patient])).rows;
+ assert.deepEqual(rows.map(x=>x.original_value),['12 U/L','18 U/L']);
+ const page=(await request(admin,`/patients/${f.patient}/consultations/${visit}`)).body;assert.ok(page.includes('12 U/L'));assert.ok(page.includes('18 U/L'));
+ const insert=async draft=>(await pool.query("INSERT INTO extraction_runs(patient_id,document_id,kind,status,model,schema_version,draft,created_by,consultation_id) VALUES($1,$2,'consultation','review','synthetic',2,$3,$4,$5) RETURNING id",[f.patient,f.doc,draft,f.actor,visit])).rows[0].id;
+ const reread=await insert(f.draft);assert.equal((await post(admin,`/api/patients/${f.patient}/extractions/${reread}/confirm`,{draft:f.draft})).status,200);
+ assert.equal((await pool.query('SELECT count(*)::int n FROM measurements WHERE patient_id=$1',[f.patient])).rows[0].n,2);
+ const changed={...f.draft,clinicalRecords:[{...one,name:'Nuevo dato antes del conflicto'},{...one,originalValue:'99 U/L',numericValue:'99'}]},run=await insert(changed);
+ const conflict=await post(admin,`/api/patients/${f.patient}/extractions/${run}/confirm`,{draft:changed});assert.equal(conflict.status,409);assert.match(conflict.body.error,/distinto contenido/);
+ assert.equal((await pool.query('SELECT count(*)::int n FROM measurements WHERE patient_id=$1',[f.patient])).rows[0].n,2,'Confirmación atómica: no guarda parcialmente');
+ assert.equal((await pool.query('SELECT status FROM extraction_runs WHERE id=$1',[run])).rows[0].status,'review');
+ }finally{await pool.end()}
+});
+
+test('lectura de documentos no aplica presupuesto diario pero conserva concurrencia',{skip:!enabled||!localDb},async()=>{
+ const admin=client();await login(admin,email,password);const pool=new pg.Pool({connectionString:process.env.SMOKE_DATABASE_URL,max:1});let active=[];
+ try{
+ const f=await withdrawalFixture(admin,pool,{records:[]});
+ await pool.query("INSERT INTO extraction_runs(patient_id,document_id,kind,status,model,schema_version,created_by) SELECT $1,$2,'consultation','failed','synthetic',2,$3 FROM generate_series(1,21)",[f.patient,f.doc,f.actor]);
+ for(let i=0;i<2;i++){
+ const patient=(await post(admin,'/api/patients',{name:'Concurrencia lectura ficticia',authorizedBy:'Prueba',basis:'Prueba local'})).body.patient.id;
+ const form=new FormData();form.append('file',new File(['%PDF-1.4\n%%EOF'],'concurrencia.pdf',{type:'application/pdf'}));const doc=(await request(admin,`/api/patients/${patient}/documents`,{method:'POST',body:form,headers:{origin:'null','x-csrf-token':await token(admin)}})).body.document.id;
+ active.push((await pool.query("INSERT INTO extraction_runs(patient_id,document_id,kind,status,model,schema_version,created_by) VALUES($1,$2,'consultation','running','synthetic',2,$3) RETURNING id",[patient,doc,f.actor])).rows[0].id);
+ }
+ const result=await post(admin,`/api/patients/${f.patient}/documents/${f.doc}/analyze`,{kind:'consultation',replaceReview:true});assert.equal(result.status,429);assert.match(result.body.error,/dos lecturas/);assert.doesNotMatch(result.body.error,/diario/);
+ }finally{if(active.length)await pool.query("UPDATE extraction_runs SET status='interrupted',finished_at=now() WHERE id=ANY($1::uuid[])",[active]);await pool.end()}
+});
+
+test('revisar lectura guardada recupera una variante omitida por versión antigua sin IA ni duplicados',{skip:!enabled||!localDb},async()=>{
+ const admin=client();await login(admin,email,password);const pool=new pg.Pool({connectionString:process.env.SMOKE_DATABASE_URL,max:1});
+ try{
+ const one={kind:'measurement',name:'Marcador de recuperación',detail:'Prueba',phase:'unknown',certainty:'confirmed',unit:'U/L',referenceRange:null,dose:null,frequency:null,route:null,evidence:'Cita ficticia',page:'1',originalValue:'12 U/L',numericValue:'12'};
+ const f=await withdrawalFixture(admin,pool,{records:[one]}),two={...one,originalValue:'18 U/L',numericValue:'18'},legacy={...f.draft,clinicalRecords:[one,two]};
+ // Simulate a legacy confirmed draft whose second same-name value was silently omitted.
+ await pool.query('UPDATE extraction_runs SET draft=$2 WHERE id=$1',[f.run,legacy]);
+ const url=`/api/patients/${f.patient}/documents/${f.doc}/reopen`,opened=await post(admin,url,{});assert.equal(opened.status,200,JSON.stringify(opened.body));
+ assert.notEqual(opened.body.runId,f.run);assert.equal((await post(admin,url,{})).body.runId,opened.body.runId);
+ const run=(await pool.query('SELECT status,draft,input_tokens,output_tokens FROM extraction_runs WHERE id=$1',[opened.body.runId])).rows[0];assert.equal(run.status,'review');assert.equal(run.input_tokens,null);assert.equal(run.output_tokens,null);
+ assert.equal(run.draft.clinicalRecords.length,2);
+ const confirm=`/api/patients/${f.patient}/extractions/${opened.body.runId}/confirm`;
+ assert.equal((await post(admin,confirm,{draft:run.draft})).status,200);assert.equal((await post(admin,confirm,{draft:run.draft})).status,200);
+ assert.equal((await pool.query('SELECT count(*)::int n FROM measurements WHERE patient_id=$1',[f.patient])).rows[0].n,2);
+ const receipt=(await request(admin,`/api/patients/${f.patient}/documents/${f.doc}/analyze`)).body.savedItems;assert.equal(receipt.length,2);
+ assert.equal((await post(admin,`/api/patients/${randomUUID()}/documents/${f.doc}/reopen`,{})).status,404);
  }finally{await pool.end()}
 });

@@ -11,7 +11,7 @@ export async function POST(req:Request,{params}:{params:Promise<{id:string}>}){l
   await c.query('SELECT pg_advisory_xact_lock(742511,5)');
   await c.query("UPDATE assistant_requests SET status='failed',finished_at=now() WHERE status='running' AND created_at<now()-interval '3 minutes'");
   const counts=(await c.query("SELECT count(*) FILTER(WHERE user_id=$1 AND created_at>now()-interval '24 hours')::int AS daily,count(*) FILTER(WHERE created_at>now()-interval '24 hours')::int AS global_daily,count(*) FILTER(WHERE status='running')::int AS running FROM assistant_requests",[user.id])).rows[0];
-  if(counts.daily>=10||counts.global_daily>=50)return Promise.reject(Error('AI_BUDGET'));if(counts.running>=2)throw Error('AI_BUSY');
+  if(counts.daily>=10||counts.global_daily>=50)return Promise.reject(Error('ASSISTANT_BUDGET'));if(counts.running>=2)throw Error('ASSISTANT_BUSY');
   runId=(await c.query("INSERT INTO assistant_requests(patient_id,user_id,status) VALUES($1,$2,'running') RETURNING id",[id,user.id])).rows[0].id;
  });
  const answer=await askPatientAssistant(body.question.trim(),source);await authorizePatient(user,id);

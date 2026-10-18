@@ -1,4 +1,6 @@
 'use client';
+import {SavedClinicalRecords} from '../../../../../components/saved-clinical-records';
+import type {SavedClinicalItem} from '../../../../../lib/saved-clinical-items';
 import {CatalogPicker} from '../../../../../components/catalog-picker';
 import {ClinicalRecordProposals} from '../../../../../components/clinical-record-proposals';
 import {RemoveDocument} from '../../../../../components/remove-document';
@@ -22,6 +24,7 @@ export function ExtractionReview({patientId,documentId,initialKind,fileName,mime
   const [examination,setExamination]=useState<ExaminationDraft|null>(null),[types,setTypes]=useState<MeasurementType[]>([]);
   const [typeIds,setTypeIds]=useState<(string|null)[]>([]),[kindChoice,setKindChoice]=useState<'consultation'|'examination'|'prescription'>(initialKind);
   const [acknowledged,setAcknowledged]=useState<string[]>([]),[reviewed,setReviewed]=useState(false);
+  const [savedItems,setSavedItems]=useState<SavedClinicalItem[]>([]);
   const [taskKind,setTaskKind]=useState<string|null>(null);
   const [loading,setLoading]=useState(true);
   const [busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
@@ -32,6 +35,7 @@ export function ExtractionReview({patientId,documentId,initialKind,fileName,mime
   },[]);
   const load=useCallback(async()=>{
     const response=await fetch(base,{cache:'no-store'}),data=await response.json();if(!response.ok)throw Error(data.error);
+    setSavedItems(data.savedItems||[]);
     setTaskKind(data.careTask?.kind||null);if(data.careTask)setKindChoice(data.careTask.kind);
     const latest:Run|null=data.runs[0]||null;setRun(latest);setAcknowledged([]);setReviewed(false);
     if(latest){setKindChoice(latest.purpose==='prescription'?'prescription':latest.kind);setConsultation(latest.kind==='consultation'?latest.draft as ConsultationDraft:null);
@@ -53,6 +57,7 @@ export function ExtractionReview({patientId,documentId,initialKind,fileName,mime
     const data=await response.json();if(!response.ok){await load();throw Error(data.error)}await load();
   }catch(e){setError(e instanceof Error?e.message:'No se pudo analizar')}finally{setBusy(false)}}
   useEffect(()=>{if(run?.status!=='running')return;const timer=setInterval(()=>{void load().catch(e=>setError(e.message))},3000);return()=>clearInterval(timer)},[run?.status,load]);
+  async function reopen(){setBusy(true);setError('');try{const r=await fetch(base.replace(/analyze$/,'reopen'),{method:'POST',headers:{'x-csrf-token':await csrf()}}),j=await r.json();if(!r.ok)throw Error(j.error);await load();setNotice('Lectura guardada recuperada sin consultar a la IA. Revisa las propuestas y confirma; se conservarán los datos existentes.')}catch(e){setError(e instanceof Error?e.message:'No se pudo recuperar la lectura.')}finally{setBusy(false)}}
   async function saveDraft(){if(!run||!draft)return;setBusy(true);setError('');try{const r=await fetch(base,{method:'PATCH',headers:{'Content-Type':'application/json','x-csrf-token':await csrf()},body:JSON.stringify({runId:run.id,reviewVersion:run.reviewVersion,draft,measurementTypeIds:kindChoice==='examination'?typeIds:undefined})}),j=await r.json();if(!r.ok)throw Error(j.error);setRun({...run,reviewVersion:j.reviewVersion});setNotice('Correcciones guardadas. Puedes continuar la revisión más tarde.')}catch(e){setError(e instanceof Error?e.message:'No se pudieron guardar las correcciones')}finally{setBusy(false)}}
   async function confirm(form:HTMLFormElement){if(!run)return;if(blockers.length){setError(blockers.join(' '));return}setBusy(true);setError('');try{
     const identity={reviewVersion:run.reviewVersion,identityAcknowledgements:acknowledged,prescribingDoctorId:String(new FormData(form).get('prescribingDoctorId')||'')||null};
@@ -94,14 +99,15 @@ export function ExtractionReview({patientId,documentId,initialKind,fileName,mime
       <DocumentPreview name={fileName} mime={mimeType} href={`/api/patients/${patientId}/documents/${documentId}`}/>
       <RemoveDocument patientId={patientId} documentId={documentId}/>
     </section><section className="v-panel"><div className="v-section-head"><h2>Revisar y corregir datos</h2></div>
-      <div className="v-toolbar"><label>Registro principal<select disabled={!!taskKind} value={kindChoice} onChange={event=>setKindChoice(event.target.value as 'consultation'|'examination'|'prescription')}>
+      <div className="v-toolbar"><label>Registro principal<select disabled={!!taskKind||!!run?.consultationId||!!run?.examinationId||run?.status==='confirmed'} value={kindChoice} onChange={event=>setKindChoice(event.target.value as 'consultation'|'examination'|'prescription')}>
         <option value="consultation">Consulta</option><option value="examination">Examen</option><option value="prescription">Receta / tratamiento</option></select></label>
-        <button className="v-button" disabled={loading||busy||run?.status==='running'} onClick={analyze}>{busy?'Procesando…':run?.status==='confirmed'?'Completar datos del documento':run?'Volver a extraer del original':'Iniciar lectura con IA'}</button></div>
-      {taskKind&&<p className="v-note">Este archivo pertenece a un pendiente. Al confirmar los datos, se creará el registro y el pendiente quedará completado.</p>}<p className="v-form-note">Se lee el archivo completo. La elección indica dónde guardar el registro principal; las recetas crean tratamientos y medicación sin crear una consulta. alergias, tratamientos, pruebas y otros datos se proponen también.</p>{notice&&<p className="success" role="status">{notice}</p>}{loading&&<p className="v-muted" role="status">Cargando revisión…</p>}{error&&<p className="error" role="alert">{error}</p>}
+        <button className="v-button" disabled={loading||busy||run?.status==='running'} onClick={analyze}>{busy?'Procesando…':run?.status==='confirmed'?'Completar datos del documento':run?'Volver a extraer del original':'Iniciar lectura con IA'}</button>{run?.status==='confirmed'&&<button className="v-button v-secondary" disabled={busy} onClick={()=>void reopen()}>Revisar lectura guardada · sin IA</button>}</div>
+      {taskKind&&<p className="v-note">{run?.consultationId||run?.examinationId?'Este archivo ya completó su pendiente. La revisión conservará el registro existente.':'Este archivo pertenece a un pendiente. Al confirmar los datos, se creará el registro y el pendiente quedará completado.'}</p>}<p className="v-form-note">Se lee el archivo completo. La elección indica dónde guardar el registro principal; las recetas crean tratamientos y medicación sin crear una consulta. Las alergias, tratamientos, pruebas y otros datos se proponen también.</p>{notice&&<p className="success" role="status">{notice}</p>}{loading&&<p className="v-muted" role="status">Cargando revisión…</p>}{error&&<p className="error" role="alert">{error}</p>}
       {run?.status==='running'&&<p className="v-muted">La lectura está en curso. El estado se actualiza automáticamente.</p>}
       {(run?.status==='failed'||run?.status==='interrupted')&&<p className="v-muted">La lectura falló. El original sigue disponible.</p>}
       {run?.status==='confirmed'&&<p className="success">Esta extracción ya fue confirmada. <a className="v-text-link" href={run.purpose==='prescription'?`/patients/${patientId}/treatments`:`/patients/${patientId}/${run.kind==='examination'?'exams':'consultations'}/${run.examinationId||run.consultationId}`}>Ver registro →</a></p>}
 
+      {savedItems.length>0&&<SavedClinicalRecords items={savedItems} title="Datos ya guardados de este documento"/>}
       {draft&&run?.status!=='confirmed'&&<><p className="v-note">Revisa y corrige los campos. La fecha y los datos ausentes pueden quedar vacíos.</p>
         <div className="v-note"><strong>Identidad leída del original</strong><p>{run?.originalDraft?.patientName||draft.patientName||'Nombre no detectado'}</p>{(run?.originalDraft?.patientBirthDate||draft.patientBirthDate)&&<p>Nacimiento: {run?.originalDraft?.patientBirthDate||draft.patientBirthDate}</p>}</div>
         {issues.length>0&&<div className="v-warning" role="region" aria-label="Revisión de identidad"><h3>Verifica que este documento pertenece al paciente</h3>{issues.map(issue=><div key={issue.field}><p>{issue.message}</p><p><strong>Documento:</strong> {issue.documentValue} · <strong>Perfil:</strong> {issue.patientValue||'Sin dato comparable'}</p><label className="v-check"><input type="checkbox" checked={acknowledged.includes(issue.field)} onChange={e=>setAcknowledged(current=>e.target.checked?[...current,issue.field]:current.filter(f=>f!==issue.field))}/>He verificado {issue.field==='name'?'el nombre':issue.field==='birthDate'?'la fecha de nacimiento':'el identificador'} y confirmo que pertenece al paciente seleccionado.</label></div>)}</div>}

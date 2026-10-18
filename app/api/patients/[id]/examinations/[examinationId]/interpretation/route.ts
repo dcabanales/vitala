@@ -14,8 +14,8 @@ export async function POST(req:Request,{params}:{params:Promise<{id:string;exami
   const existing=(await c.query("SELECT content FROM examination_interpretations WHERE examination_id=$1 AND source_hash=$2 AND status='completed' ORDER BY created_at DESC LIMIT 1",[examinationId,hash])).rows[0];
   if(existing)return {exam,measures,hash,cached:true};
   await c.query("UPDATE examination_interpretations SET status='failed' WHERE status='running' AND created_at<now()-interval '3 minutes'");
-  const count=(await c.query("SELECT count(*) FILTER(WHERE created_at>now()-interval '24 hours')::int AS daily,count(*) FILTER(WHERE status='running')::int AS running FROM examination_interpretations")).rows[0];
-  if(count.daily>=20)throw Error('AI_BUDGET');if(count.running>=2)throw Error('AI_BUSY');
+  const count=(await c.query("SELECT count(*) FILTER(WHERE status='running')::int AS running FROM examination_interpretations")).rows[0];
+  if(count.running>=2)throw Error('AI_BUSY');
   if((await c.query("SELECT 1 FROM examination_interpretations WHERE examination_id=$1 AND status='running'",[examinationId])).rowCount)throw Error('AI_BUSY');
   runId=(await c.query("INSERT INTO examination_interpretations(patient_id,examination_id,source_hash,model,status,created_by) VALUES($1,$2,$3,$4,'running',$5) RETURNING id",[id,examinationId,hash,model,user.id])).rows[0].id;
   return {exam,measures,hash,cached:false};

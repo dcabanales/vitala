@@ -48,7 +48,9 @@ export function failure(e:unknown){
   if(m==='AI_TIMEOUT')return problem('La lectura tardó demasiado. Conservamos el original; puedes reintentar.',504);
   if(m==='AI_STORAGE')return problem('No se pudo leer el archivo almacenado. El registro se conserva; reintenta o revisa el almacenamiento.',503);
   if(m==='AI_CONFIG')return problem('La lectura con IA aún no está configurada en este entorno.',503);
-  if(m==='AI_BUDGET')return problem('Se alcanzó el límite diario de análisis. Inténtalo más tarde.',429);
+  if(m==='ASSISTANT_BUDGET')return problem('Se alcanzó el límite diario del asistente. La lectura de documentos sigue disponible.',429);
+  if(m==='ASSISTANT_BUSY')return problem('El asistente está respondiendo otras preguntas. Inténtalo de nuevo en unos momentos.',429);
+  if(m.startsWith('IMPORT_CONFLICT:'))return problem('Ya hay un dato guardado con el mismo nombre y distinto contenido: '+m.slice(16)+'. No se ha guardado esta revisión. Corrige el registro existente o descarta esta propuesta; si es otro resultado, distingue su nombre antes de confirmar.',409);
   if(m==='AI_DOCUMENT_BUSY')return problem('Este documento ya se está leyendo. Su estado se actualizará automáticamente; no necesitas iniciar otra lectura.',429);
   if(m==='SUMMARY_BUSY')return problem('Ya se está preparando un resumen. Espera unos minutos y vuelve a intentarlo.',429);
   if(m==='SUMMARY_EMPTY')return problem('Publica datos clínicos antes de generar el resumen.',400);

@@ -106,7 +106,7 @@ La migración 020 añade seguimiento manual de pendientes. Desde Más → Consul
 
 Un pendiente admite un documento opcional. Cargarlo no cierra el seguimiento: la confirmación administrativa de su extracción crea la consulta o examen y completa el pendiente en la misma transacción. El paciente puede cargar su documento y esperar la revisión.
 
-En medicación, «¿Para qué sirve?» muestra una explicación general. El administrador puede generarla una vez; se reutiliza por medicamento y principio activo, sin enviar datos personales. Un cambio de identidad invalida la caché. Límite: 20 generaciones por 24 horas y dos simultáneas.
+En medicación, «¿Para qué sirve?» muestra una explicación general. El administrador puede generarla una vez; se reutiliza por medicamento y principio activo, sin enviar datos personales. Un cambio de identidad invalida la caché. Sin límite diario de generaciones; máximo dos simultáneas.
 
 «Más → Asistente de salud» permite preguntas independientes sobre salud y registros publicados del paciente autorizado. No dispone de herramientas de escritura ni acceso a otros pacientes. Las citas se validan contra los datos enviados. Límite: 10 solicitudes por usuario y 50 globales por 24 horas, dos simultáneas; los intentos fallidos también cuentan. Solo se guarda metadata de uso, no preguntas ni respuestas. Usa `OPENAI_MODEL`, `OPENAI_API_KEY` y Responses con `store:false`. La información educativa de IA puede contener errores; no prescribe ni sustituye atención médica.
 
@@ -119,3 +119,14 @@ La administración puede usar «Retirar documento y datos importados». La vista
 Los datos se marcan `void` y dejan de participar en vistas clínicas, reportes y resumen (la huella de sus datos invalida la caché anterior sin llamar a OpenAI). Los pendientes completados por registros retirados vuelven a pendientes. «Documentos → Ver retirados» permite restaurar el lote; se detiene si hubo cambios posteriores, para no sobrescribirlos. La restauración recupera los registros existentes, no los vuelve a importar.
 
 Los archivos idénticos se reconocen por SHA-256, incluso renombrados o retirados; se ofrece revisar/restaurar el existente. La comprobación se serializa para cargas simultáneas. No se promete equivalencia semántica entre PDFs modificados o fotografías diferentes. Tras una importación confirmada no se permite cambiar su tipo principal para duplicarla como consulta/examen/receta.
+
+
+### Lectura y resultados confirmados
+
+El límite diario solo corresponde al asistente conversacional. Lectura de documentos, resúmenes, interpretaciones y explicaciones de medicamentos conservan el control de concurrencia, sin tope diario de la aplicación (siguen aplicando la cuota y límites del proveedor).
+
+Las consultas muestran las mediciones y los demás datos importados; los exámenes muestran también alergias, condiciones, medicación y otras propuestas complementarias. La revisión presenta un listado de los datos realmente guardados y enlaces a sus módulos. Los acordeones cerrados también se confirman: no es necesario abrirlos para guardarlos.
+
+La deduplicación compara el contenido, no solo el nombre: dos resultados distintos con el mismo nombre en una primera lectura se conservan, mientras que propuestas idénticas no se duplican. En lecturas complementarias, un nombre ya guardado con contenido distinto bloquea toda la confirmación con un aviso, para revisar la diferencia sin sobrescribir ni omitirla silenciosamente. Los registros editados conservan sus valores.
+
+«Revisar lectura guardada · sin IA» abre una revisión desde el último borrador confirmado, sin volver a leer el archivo. Permite recuperar propuestas de versiones anteriores que quedaron omitidas por coincidencia de nombre; solo acepta esas variantes si constaban ya en una lectura confirmada. No restaura registros retirados ni sobrescribe correcciones.
