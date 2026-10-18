@@ -23,7 +23,7 @@ export default async function Report({params,searchParams}:{params:Promise<{id:s
     query<{event_date:string|null;name:string;findings:string|null;conclusion:string|null}>(`SELECT event_date,name,findings,conclusion FROM examinations
       WHERE patient_id=$1 AND status='published' AND ($2::date IS NULL OR event_date >= $2) AND ($3::date IS NULL OR event_date <= $3)
       AND ($4::uuid IS NULL OR specialty_id=$4) ORDER BY event_date DESC NULLS LAST LIMIT 200`,[id,from,to,specialty]),
-    query<{documented_date:string|null;type_name:string;original_value:string;unit:string|null;reference_range:string|null}>(`SELECT m.documented_date,t.name AS type_name,m.original_value,m.unit,m.reference_range FROM measurements m
+    query<{documented_date:string|null;type_name:string;original_value:string;unit:string|null;reference_range:string|null}>(`SELECT m.documented_date,COALESCE(m.name_as_documented,t.name) AS type_name,m.original_value,m.unit,m.reference_range FROM measurements m
       JOIN measurement_types t ON t.id=m.type_id WHERE m.patient_id=$1 AND m.status='published'
       AND (m.examination_id IS NULL OR EXISTS(SELECT 1 FROM examinations e WHERE e.patient_id=m.patient_id AND e.id=m.examination_id AND e.status='published'))
       AND (m.consultation_id IS NULL OR EXISTS(SELECT 1 FROM consultations c WHERE c.patient_id=m.patient_id AND c.id=m.consultation_id AND c.status='published'))

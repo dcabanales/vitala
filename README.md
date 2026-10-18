@@ -76,3 +76,17 @@ En Perfil → Acceso se crean, renuevan y revocan invitaciones; se ve si la cuen
 Revisar documentos reúne las cargas y permite filtrar por paciente, fecha, tipo y estado. Los borradores de IA se pueden corregir, guardar y retomar; se conserva la extracción original. La confirmación es idempotente y comprueba versiones para impedir que una revisión antigua sobrescriba otra. Los errores de proveedor, cuota, archivo y tiempo de espera son explícitos.
 
 Las correcciones y archivos clínicos requieren motivo y conservan la versión anterior. Los catálogos se desactivan sin romper sus referencias. Doctor, centro, especialidad y medicamento pueden crearse desde el formulario clínico sin perder su contenido.
+
+### Resultados de laboratorio y explicación de IA
+
+La migración `017_lab_result_names.sql` conserva el nombre documentado de cada análisis, independiente del tipo del catálogo. Recupera nombres de extracciones confirmadas solo si hay una coincidencia exacta y única y el resultado no fue corregido. Los resultados pueden corregirse desde el detalle del examen; las revisiones conservan los valores anteriores. Las gráficas separan nombres distintos aunque compartan categoría.
+
+Cuando faltan textos del informe, el administrador puede generar una explicación orientativa con OpenAI desde el examen. Se muestra separada y etiquetada como IA, sin rellenar los campos del médico. Se envían los datos del examen y sus resultados publicados, sin adjuntar la identidad ni el PDF. Se reutiliza una explicación existente para los mismos datos; cambios posteriores la ocultan hasta regenerarla. El límite es de 20 solicitudes por 24 horas y dos simultáneas, independiente del límite de extracción documental.
+
+### Lectura general de documentos
+
+La lectura desde Consultas o Exámenes recorre el documento completo. El punto de entrada elige el registro principal; las propuestas adicionales incluyen alergias, condiciones documentadas, antecedentes, tratamientos, medicación, pruebas y mediciones, con evidencia y revisión humana. Los resultados no requieren crear previamente un tipo de catálogo. Un tratamiento administrado durante la atención queda completado; las recomendaciones históricas al alta no se consideran automáticamente activas hoy.
+
+La migración `018_consultation_records.sql` conserva la procedencia y evita repetir propuestas del mismo documento. «Completar datos del documento» permite releer archivos confirmados para añadir información omitida, preservando el registro principal y sus correcciones. No actualiza automáticamente expedientes existentes: las nuevas propuestas deben revisarse y confirmarse.
+
+«Quitar documento» está disponible en la biblioteca y la revisión. Retira el archivo de la biblioteca y permite volver a cargarlo, conservando la fuente de registros clínicos confirmados. Las lecturas atascadas durante más de tres minutos se marcan interrumpidas para permitir la retirada; una lectura reciente sigue protegida.

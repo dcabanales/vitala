@@ -34,7 +34,8 @@ async function archive(request:Request,{params}:Context,removed:boolean){try{
  await transaction(async client=>{
   const doc=(await client.query('SELECT created_by,status FROM medical_documents WHERE patient_id=$1 AND id=$2 FOR UPDATE',[id,documentId])).rows[0];
   if(!doc||(user.role!=='admin'&&doc.created_by!==user.id))throw Error('PATIENT');
-  if((await client.query("SELECT 1 FROM extraction_runs WHERE patient_id=$1 AND document_id=$2 AND status='running'",[id,documentId])).rowCount)throw Error('CONFLICT');
+  await client.query("UPDATE extraction_runs SET status='interrupted',finished_at=now(),error_code='INTERRUPTED' WHERE patient_id=$1 AND document_id=$2 AND status='running' AND created_at<now()-interval '3 minutes'",[id,documentId]);
+  if((await client.query("SELECT 1 FROM extraction_runs WHERE patient_id=$1 AND document_id=$2 AND status='running'",[id,documentId])).rowCount)throw Error('DOCUMENT_BUSY');
   await client.query('UPDATE medical_documents SET archived_at=CASE WHEN $3 THEN now() ELSE NULL END,updated_at=now() WHERE patient_id=$1 AND id=$2',[id,documentId,removed]);
   await client.query("INSERT INTO audit_events(actor_id,action,resource_type,resource_id,patient_id) VALUES($1,$2,'document',$3,$4)",[user.id,removed?'archive':'restore',documentId,id]);
  });return Response.json({removed},{headers:noCache});

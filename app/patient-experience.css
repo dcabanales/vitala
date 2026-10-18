@@ -40,3 +40,17 @@ h1{font-family:var(--serif);font-weight:400!important;letter-spacing:-1.1px!impo
 /* History anchors the introduction; the latest consultation has its own row. */
 .v-health-intro>.v-intro-history{margin:0;min-width:0;background:#e8f0e4;border:0;padding:26px 28px;align-self:start}.v-intro-history .v-section-head{margin-bottom:18px}.v-intro-history .v-history-snippet{margin-left:4px;padding:0 0 16px 18px}.v-intro-history>.v-text-link{display:flex;justify-content:space-between;border-top:1px solid #ccd9c3;padding-top:16px;margin-top:8px}.v-recent-visit-strip{margin:0 0 36px;background:#fff;border:1px solid var(--line)}.v-recent-visit-strip .v-eyebrow{max-width:none}.v-recent-visit-strip .v-prose,.v-recent-visit-strip .v-expand-text{max-width:760px}.v-recent-visit-strip>a{max-width:260px}.v-recent-visit-strip h2{font-size:20px}
 @media(max-width:760px){.v-health-intro>.v-intro-history{padding:23px}.v-recent-visit-strip{margin-bottom:30px}.v-recent-visit-strip>a{max-width:none}}
+
+.v-ai-explanation{margin-top:24px;padding:24px;background:#f0f5fa;border:1px solid #d7e3ed;border-radius:20px}.v-ai-explanation>.v-category{display:block;line-height:1.7;color:#496a81;margin-bottom:12px}.v-ai-explanation h3{font-size:15px;margin-top:22px}.v-result-editor{scroll-margin-top:250px}.v-result-editor>label{display:flex;flex-direction:column;gap:8px;margin:20px 0;color:#415e4f;font-size:13px}.v-result-editor>label select{width:100%;min-width:0}.v-result-editor .v-record-actions{font-weight:400}.v-result-editor .v-form{padding-top:18px}
+.v-result-editor>label select{min-height:48px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:#fafbf7;color:var(--ink);font:inherit;font-size:16px}
+.v-intro-history .v-activity-row{padding:14px 0;gap:12px;grid-template-columns:auto minmax(0,1fr) auto}.v-intro-history .v-activity-row h3{font-size:15px}.v-intro-history .v-activity-row p{font-size:12px}.v-intro-history .v-section-head{flex-wrap:wrap}.v-health-aside .v-aside-last-visit{margin-top:24px;background:#fff;border:1px solid var(--line)}.v-health-aside .v-aside-last-visit h2{font-size:21px}.v-import-proposals{margin:24px 0}.v-import-proposals summary{line-height:1.6}.v-import-proposals .v-form{padding:16px 0}.v-import-proposals blockquote{overflow-wrap:anywhere}
+
+/* Document upload and review feedback */
+.v-summary-action{margin-top:18px;min-height:50px;padding:14px 22px;box-shadow:0 5px 14px #205d4f20}
+.v-dropzone{display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center;padding:32px 20px;border:2px dashed #92ada0;border-radius:18px;background:#f2f7ee;transition:background .15s,border-color .15s}
+.v-dropzone.is-dragging,.v-dropzone:focus-within{background:#e1efe4;border-color:#235f52}
+.v-dropzone>strong{font-size:20px;color:#234d41}.v-dropzone>small{color:#526c5c}
+.v-file-picker{position:relative;display:inline-flex;justify-content:center;padding:12px 22px;background:#235f52;color:white!important;border-radius:28px;cursor:pointer;overflow:hidden}
+.v-file-picker input{position:absolute;inset:0;opacity:0;width:100%;height:100%;cursor:pointer}
+.v-validation-help{padding:14px 18px;border-radius:12px;background:#f4f1e5;color:#625435;line-height:1.6;margin:14px 0}
+.v-validation-help ul{padding-left:22px;margin:6px 0 0}.v-button[aria-disabled=true]{opacity:.65;cursor:help}

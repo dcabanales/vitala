@@ -100,3 +100,38 @@ test('las tendencias separan tipos, unidades y muestras y excluyen datos no comp
  const points=trendPoints([...grouped[0].records,{...base,id:'draft',status:'draft'},{...base,id:'interval',valueKind:'interval'},{...base,id:'missing-unit',unit:null},{...base,id:'missing-date',documentedDate:null},{...base,id:'invalid',numericValue:'NaN'},{...base,id:'invalid-date',documentedDate:'not-a-date'}]);
  assert.deepEqual(points.map(p=>p.id),['a','b']);assert.equal(points[0].numericValue,'0');
 });
+
+test('los análisis distintos no se mezclan aunque compartan tipo de catálogo',async()=>{
+ const {measurementGroups}=await import('../app/lib/measurement-series.ts');
+ const base={id:'a',typeId:'blood',typeName:'Colesterol',documentedDate:'2026-10-06',valueKind:'number',numericValue:'148',originalValue:'148',unit:'mg/dl',referenceRange:'60 - 200',examinationId:'e',status:'published'};
+ const groups=measurementGroups([base,{...base,id:'b',typeName:'Triglicéridos',numericValue:'58'}]);
+ assert.equal(groups.length,2);assert.deepEqual(groups.map(g=>g.name),['Colesterol','Triglicéridos']);
+});
+test('la explicación IA usa valores sin identidad y queda invalidada al corregir resultados',async()=>{
+ const {examinationFingerprint,interpretExamination}=await import('../app/lib/examination-interpretation.ts');
+ const exam={id:'e',version:1,name:'Química sanguínea',status:'published',patient_name:'NO ENVIAR',patient_id:'NO ENVIAR'};
+ const measurements=[{id:'a',version:1,type_name:'Sanguínea',name_as_documented:'Colesterol',original_value:'148',numeric_value:'148',unit:'mg/dl',reference_range:'60 - 200',status:'published'}];
+ const hash=examinationFingerprint(exam,measurements);
+ assert.notEqual(hash,examinationFingerprint(exam,[{...measurements[0],version:2,original_value:'149'}]));
+ assert.notEqual(hash,examinationFingerprint(exam,[{...measurements[0],name_as_documented:'HDL'}]));
+ assert.notEqual(hash,examinationFingerprint(exam,[]));
+ const oldFetch=globalThis.fetch,oldKey=process.env.OPENAI_API_KEY;process.env.OPENAI_API_KEY='synthetic-only';
+ try{globalThis.fetch=async(url,options)=>{
+  const request=JSON.parse(options.body);assert.equal(request.store,false);assert.ok(!request.input.includes('NO ENVIAR'));assert.ok(request.input.includes('Colesterol'));assert.match(request.instructions,/No diagnostiques/);
+  return new Response(JSON.stringify({status:'completed',output:[{content:[{type:'output_text',text:JSON.stringify({findings:'Observación sintética',conclusion:'Resumen sintético',guidance:'Orientación sintética'})}]}]}),{status:200});
+ };
+ assert.equal((await interpretExamination(exam,measurements,'synthetic-model')).findings,'Observación sintética');
+ globalThis.fetch=async()=>new Response(JSON.stringify({status:'completed',output:[{content:[{type:'output_text',text:'{"diagnosis":"inventado"}'}]}]}),{status:200});
+ await assert.rejects(()=>interpretExamination(exam,measurements,'synthetic-model'),/AI_INVALID/);
+ }finally{globalThis.fetch=oldFetch;if(oldKey===undefined)delete process.env.OPENAI_API_KEY;else process.env.OPENAI_API_KEY=oldKey}
+});
+
+test('la lectura completa acepta datos de otros módulos desde consulta o examen',async()=>{
+ const record={kind:'allergy',name:'Sustancia ficticia',detail:null,phase:'historical',certainty:'confirmed',originalValue:null,numericValue:null,unit:null,referenceRange:null,dose:null,frequency:null,route:null,evidence:'Alergia a sustancia ficticia',page:'1'};
+ const c={patientName:null,eventDate:null,doctorName:null,centerName:null,specialtyName:null,reason:null,symptoms:null,summary:null,findings:null,impression:null,conclusion:null,recommendations:null,followUp:null,evidence:[],clinicalRecords:[record]};
+ assert.equal(extractedConsultation.safeParse(c).success,true);
+ const e={patientName:null,name:'Examen',eventDate:null,doctorName:null,centerName:null,specialtyName:null,indication:null,findings:null,conclusion:null,measurements:[],evidence:[],clinicalRecords:[record]};
+ assert.equal(extractedExamination.safeParse(e).success,true);
+ assert.equal(extractedConsultation.safeParse({...c,clinicalRecords:[{...record,evidence:''}]}).success,false);
+ assert.equal(extractedExamination.safeParse({...e,clinicalRecords:[{...record,kind:'measurement',originalValue:null}]}).success,false);
+});

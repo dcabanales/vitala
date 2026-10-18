@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {randomUUID,randomBytes,scryptSync} from 'node:crypto';
 import pg from 'pg';
 import {totp} from '../app/lib/mfa.ts';
+import {examinationFingerprint} from '../app/lib/examination-interpretation.ts';
 
 const base=process.env.SMOKE_BASE_URL,email=process.env.SMOKE_ADMIN_EMAIL,password=process.env.SMOKE_ADMIN_PASSWORD;
 const enabled=!!base&&!!email&&!!password&&['localhost','127.0.0.1'].includes(new URL(base||'http://invalid.example').hostname);
@@ -136,7 +137,7 @@ test('revisión de IA: identidad distinta bloqueada y confirmación idempotente'
   }finally{await pool.end()}
 });
 
-test('examen extraído: medición estructurada, hallazgo narrativo y revisión idempotente', {skip:!enabled||!localDb}, async()=>{
+test('examen extraído: resultados automáticos con nombre propio y revisión idempotente', {skip:!enabled||!localDb}, async()=>{
   const admin=client();await login(admin,email,password);
   const name='Examen sintético '+randomUUID().slice(0,8);
   const created=await post(admin,'/api/patients',{name,authorizedBy:'Paciente ficticio',basis:'Prueba local sintética'});
@@ -149,7 +150,7 @@ test('examen extraído: medición estructurada, hallazgo narrativo y revisión i
   const draft={patientName:name,name:'Analítica ficticia',eventDate:'2026-10-15',doctorName:'Dra. Ejemplo',centerName:'Centro Ejemplo',
     specialtyName:'Laboratorio',indication:null,findings:'Informe sintético',conclusion:null,
     measurements:[
-      {typeName:'Glucosa',originalValue:'92 mg/dL',numericValue:'92',unit:'mg/dL',referenceRange:'70-100'},
+      {typeName:'Glucosa plasmática',originalValue:'92 mg/dL',numericValue:'92',unit:'mg/dL',referenceRange:'70-100'},
       {typeName:'Marcador ficticio',originalValue:'no detectable',numericValue:null,unit:null,referenceRange:null}
     ],evidence:[]};
   const types=(await request(admin,'/api/measurement-types')).body.types,glucose=types.find(t=>t.name==='Glucosa');assert.ok(glucose);
@@ -171,9 +172,9 @@ test('examen extraído: medición estructurada, hallazgo narrativo y revisión i
     assert.equal(again.body.examination.alreadyConfirmed,true);
     const exam=await pool.query('SELECT event_date::text,doctor_as_documented,findings FROM examinations WHERE id=$1',[first.body.examination.id]);
     assert.equal(exam.rows[0].event_date,'2026-10-15');assert.equal(exam.rows[0].doctor_as_documented,'Dra. Ejemplo');
-    assert.match(exam.rows[0].findings,/Marcador ficticio: no detectable/);
-    const measurements=await pool.query('SELECT numeric_value::text,original_value,document_id FROM measurements WHERE examination_id=$1',[first.body.examination.id]);
-    assert.equal(measurements.rowCount,1);assert.equal(measurements.rows[0].numeric_value,'92');
+    assert.equal(exam.rows[0].findings,'Informe sintético');
+    const measurements=await pool.query('SELECT id,name_as_documented,numeric_value::text,original_value,document_id FROM measurements WHERE examination_id=$1 ORDER BY numeric_value DESC NULLS LAST',[first.body.examination.id]);
+    assert.equal(measurements.rowCount,2);assert.equal(measurements.rows[0].name_as_documented,'Glucosa plasmática');assert.equal(measurements.rows[0].numeric_value,'92');
     assert.equal(measurements.rows[0].original_value,'92 mg/dL');assert.equal(measurements.rows[0].document_id,documentId);
     const link=await pool.query('SELECT document_id FROM examination_documents WHERE examination_id=$1',[first.body.examination.id]);
     assert.equal(link.rows[0].document_id,documentId);
@@ -193,7 +194,22 @@ test('examen extraído: medición estructurada, hallazgo narrativo y revisión i
     const hidden=(await request(patient,detailPath)).body;
     assert.equal(typeof hidden,'string');assert.ok(!hidden.includes('analitica-ficticia.pdf'));
     assert.equal((await request(patient,`/api/patients/${patientId}/documents/${documentId}`)).status,404);
-    const privateMeasures=(await request(patient,`/api/patients/${patientId}/measurements`)).body.measurements;assert.equal(privateMeasures[0].documentId,null);assert.equal(privateMeasures[0].typeId,glucose.id);
+    assert.match(hidden,/Glucosa plasmática/);assert.ok(!hidden.includes('Corregir resultados individuales'));
+    assert.equal((await post(patient,`/api/patients/${patientId}/examinations/${first.body.examination.id}/interpretation`,{})).status,404);
+    const snapshotExam=(await pool.query('SELECT * FROM examinations WHERE id=$1',[first.body.examination.id])).rows[0];
+    const snapshotMeasures=(await pool.query('SELECT m.*,t.name AS type_name FROM measurements m JOIN measurement_types t ON t.id=m.type_id WHERE examination_id=$1',[first.body.examination.id])).rows;
+    await pool.query("INSERT INTO examination_interpretations(patient_id,examination_id,source_hash,model,status,content,created_by) VALUES($1,$2,$3,'synthetic','completed',$4,$5)",[patientId,first.body.examination.id,examinationFingerprint(snapshotExam,snapshotMeasures),{findings:'Observación IA sintética',conclusion:'Conclusión IA sintética vigente',guidance:'Orientación IA sintética'},actor]);
+    assert.match((await request(patient,detailPath)).body,/Conclusión IA sintética vigente/);
+    const editResult={id:measurements.rows[0].id,version:1,nameAsDocumented:'Glucosa en plasma',originalValue:'93 mg/dL',numericValue:'93',unit:'mg/dL',referenceRange:'70-100',changeReason:'Corrección sintética del resultado'};
+    const patchResult=actor=>request(actor,`/api/patients/${patientId}/measurements`,{method:'PATCH',body:JSON.stringify(editResult),headers:{origin:'null','content-type':'application/json','x-csrf-token':actor.csrf}});
+    patient.csrf=await token(patient);admin.csrf=await token(admin);
+    assert.equal((await patchResult(patient)).status,404);
+    assert.equal((await patchResult(admin)).status,200);
+    assert.equal((await patchResult(admin)).status,409);
+    const correctedPage=(await request(patient,detailPath)).body;assert.match(correctedPage,/Glucosa en plasma/);assert.ok(!correctedPage.includes('Conclusión IA sintética vigente'));
+    const revisions=await pool.query("SELECT snapshot FROM clinical_fact_revisions WHERE resource_id=$1 AND resource_type='measurement'",[editResult.id]);
+    assert.equal(revisions.rows[0].snapshot.name_as_documented,'Glucosa plasmática');
+    const privateMeasures=(await request(patient,`/api/patients/${patientId}/measurements`)).body.measurements;assert.equal(privateMeasures.find(m=>m.typeId===glucose.id).documentId,null);assert.equal(privateMeasures.find(m=>m.typeId===glucose.id).typeId,glucose.id);
     const publish=await request(admin,`/api/patients/${patientId}/documents/${documentId}`,{
       method:'PATCH',body:JSON.stringify({visibleToPatient:true}),
       headers:{origin:'null','content-type':'application/json','x-csrf-token':await token(admin)}
@@ -202,7 +218,7 @@ test('examen extraído: medición estructurada, hallazgo narrativo y revisión i
     const shown=(await request(patient,detailPath)).body;
     assert.match(shown,/analitica-ficticia\.pdf/);
     assert.equal((await request(patient,`/api/patients/${patientId}/documents/${documentId}`)).status,200);
-    assert.equal((await request(patient,`/api/patients/${patientId}/measurements`)).body.measurements[0].documentId,documentId);
+    assert.equal((await request(patient,`/api/patients/${patientId}/measurements`)).body.measurements.find(m=>m.typeId===glucose.id).documentId,documentId);
     const change={version:1,name:'Analítica corregida',eventDate:'2026-10-15',indication:null,
       findings:'Hallazgo rectificado',conclusion:null,status:'published',changeReason:'Corrección del informe sintético'};
     const correction=await request(admin,`/api/patients/${patientId}/examinations/${first.body.examination.id}`,{
@@ -305,11 +321,11 @@ test('IA: corregir datos, confirmar cada discrepancia y conservar original y aud
   assert.equal((await post(admin,url,{draft:corrected})).status,409);
   assert.equal((await post(admin,url,{draft:corrected,identityAcknowledgements:['name'],identityReason:'Variante del nombre verificada'})).status,409);
   assert.equal((await pool.query('SELECT count(*)::int AS n FROM consultations WHERE patient_id=$1',[patientId])).rows[0].n,0);
-  const body={draft:corrected,identityAcknowledgements:['name','birthDate','identifier'],identityReason:'Datos ficticios: diferencias revisadas contra el documento de prueba'};
+  const body={draft:corrected,identityAcknowledgements:['name','birthDate','identifier']};
   const saved=await post(admin,url,body);assert.equal(saved.status,200);
   const again=await post(admin,url,body);assert.equal(again.body.consultation.id,saved.body.consultation.id);
   const run=(await pool.query('SELECT original_draft,draft,identity_review FROM extraction_runs WHERE id=$1',[runId])).rows[0];
-  assert.equal(run.original_draft.patientName,original.patientName);assert.equal(run.draft.summary,corrected.summary);assert.equal(run.identity_review.issues.length,3);
+  assert.equal(run.original_draft.patientName,original.patientName);assert.equal(run.draft.summary,corrected.summary);assert.equal(run.identity_review.issues.length,3);assert.deepEqual(run.identity_review.acknowledgements,['name','birthDate','identifier']);assert.equal(run.identity_review.reason,null);
   const stored=(await pool.query('SELECT summary,conclusion FROM consultations WHERE id=$1',[saved.body.consultation.id])).rows[0];assert.deepEqual(stored,{summary:corrected.summary,conclusion:corrected.conclusion});
   assert.equal((await pool.query('SELECT document_id FROM consultation_documents WHERE consultation_id=$1',[saved.body.consultation.id])).rows[0].document_id,documentId);
   const audit=await pool.query("SELECT 1 FROM audit_events WHERE resource_id=$1 AND action='confirm_document_identity'",[runId]);assert.equal(audit.rowCount,1);
@@ -396,5 +412,46 @@ test('edición y archivo conservan revisiones y relaciones; revisión IA guarda 
  assert.equal((await request(admin,`/api/patients/${patient}/documents`)).body.documents[0].processingStatus,'confirmed');
  assert.equal((await patch(`/api/patients/${patient}/consultations/${confirmed.body.consultation.id}`,{version:1,status:'void',changeReason:'Archivo de prueba'})).status,200);
  assert.ok((await pool.query('SELECT count(*)::int AS n FROM clinical_fact_revisions WHERE patient_id=$1',[patient])).rows[0].n>=4);
+ }finally{await pool.end()}
+});
+
+test('migración de laboratorio recupera títulos inequívocos y conserva correcciones previas',{skip:!localDb},async()=>{
+ const {readFile}=await import('node:fs/promises');const pool=new pg.Pool({connectionString:process.env.SMOKE_DATABASE_URL,max:1});const c=await pool.connect();
+ try{await c.query('BEGIN');const schema='lab_test_'+randomUUID().replaceAll('-','');await c.query(`CREATE SCHEMA ${schema}`);await c.query(`SET LOCAL search_path TO ${schema},pg_catalog`);
+ await c.query('CREATE TABLE users(id uuid PRIMARY KEY);CREATE TABLE examinations(patient_id uuid,id uuid,UNIQUE(patient_id,id));CREATE TABLE measurements(id uuid PRIMARY KEY,patient_id uuid,examination_id uuid,document_id uuid,original_value text,unit text,reference_range text,version int);CREATE TABLE extraction_runs(patient_id uuid,examination_id uuid,document_id uuid,status text,draft jsonb)');
+ const patient=randomUUID(),exam=randomUUID(),doc=randomUUID();
+ for(const [value,version] of [['150',1],['60',1],['65',2]])await c.query('INSERT INTO measurements VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[randomUUID(),patient,exam,doc,value,'mg/dl','0 - 200',version]);
+ await c.query('INSERT INTO extraction_runs VALUES($1,$2,$3,$4,$5)',[patient,exam,doc,'confirmed',{measurements:[{typeName:'Colesterol',originalValue:'150',unit:'mg/dl',referenceRange:'0 - 200'},{typeName:'A',originalValue:'60',unit:'mg/dl',referenceRange:'0 - 200'},{typeName:'B',originalValue:'60',unit:'mg/dl',referenceRange:'0 - 200'},{typeName:'HDL',originalValue:'65',unit:'mg/dl',referenceRange:'0 - 200'}]}]);
+ await c.query(await readFile(new URL('../migrations/017_lab_result_names.sql',import.meta.url),'utf8'));
+ const rows=(await c.query('SELECT original_value,name_as_documented FROM measurements ORDER BY original_value')).rows;
+ assert.deepEqual(rows,[{original_value:'150',name_as_documented:'Colesterol'},{original_value:'60',name_as_documented:null},{original_value:'65',name_as_documented:null}]);
+ }finally{await c.query('ROLLBACK');c.release();await pool.end()}
+});
+
+test('lectura general desde ambos accesos, complementos idempotentes y retirada tras lectura interrumpida',{skip:!enabled||!localDb},async()=>{
+ const admin=client();await login(admin,email,password);const pool=new pg.Pool({connectionString:process.env.SMOKE_DATABASE_URL,max:1});
+ try{const actor=(await pool.query('SELECT id FROM users WHERE email=$1',[email])).rows[0].id;
+ for(const kind of ['consultation','examination']){
+  const name='Lectura general ficticia '+randomUUID().slice(0,8),patient=(await post(admin,'/api/patients',{name,authorizedBy:'Ficticio',basis:'Prueba sintética local'})).body.patient.id;
+  const file=new FormData();file.append('file',new File(['%PDF-1.4\n%%EOF'],'lectura-general-ficticia.pdf',{type:'application/pdf'}));
+  const up=await request(admin,`/api/patients/${patient}/documents`,{method:'POST',body:file,headers:{origin:'null','x-csrf-token':await token(admin)}});assert.equal(up.status,201);const doc=up.body.document.id;
+  const common={detail:'Dato explícito ficticio',phase:'unknown',certainty:'confirmed',originalValue:null,numericValue:null,unit:null,referenceRange:null,dose:null,frequency:null,route:null,evidence:'Cita de prueba sintética',page:'1'};
+  const records=['allergy','condition','history','treatment','medication','examination','measurement'].map(k=>({...common,kind:k,name:'Ficticio '+k,...(k==='medication'?{phase:'administered',dose:'Dosis documentada'}:{}),...(k==='measurement'?{originalValue:'42',numericValue:'42',unit:'U/L'}:{})}));
+  const baseDraft={patientName:name,eventDate:'2026-10-18',doctorName:null,centerName:null,specialtyName:null,findings:null,conclusion:null,evidence:[],clinicalRecords:records};
+  const draft=kind==='consultation'?{...baseDraft,reason:null,symptoms:null,summary:'Resumen original',impression:null,recommendations:null,followUp:null}:{...baseDraft,name:'Examen principal',indication:null,measurements:[]};
+  const insert=async parent=>(await pool.query(`INSERT INTO extraction_runs(patient_id,document_id,kind,status,model,schema_version,draft,created_by,consultation_id,examination_id) VALUES($1,$2,$3,'review','synthetic',2,$4,$5,$6,$7) RETURNING id`,[patient,doc,kind,draft,actor,kind==='consultation'?parent:null,kind==='examination'?parent:null])).rows[0].id;
+  const confirm=run=>post(admin,`/api/patients/${patient}/extractions/${run}/confirm`,kind==='consultation'?{draft}:{draft,measurementTypeIds:[]});
+  const run=await insert(null),first=await confirm(run);assert.equal(first.status,200,JSON.stringify(first.body));const parent=first.body[kind].id;
+  assert.equal((await confirm(run)).body[kind].alreadyConfirmed,true);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM consultation_import_records WHERE document_id=$1',[doc])).rows[0].n,7);
+  assert.equal((await pool.query('SELECT state FROM patient_medications WHERE patient_id=$1',[patient])).rows[0].state,'completed');
+  const reread=await insert(parent);assert.equal((await confirm(reread)).status,200);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM consultation_import_records WHERE document_id=$1',[doc])).rows[0].n,7);
+  assert.equal((await pool.query('SELECT name_as_documented FROM measurements WHERE patient_id=$1',[patient])).rows[0].name_as_documented,'Ficticio measurement');
+  await pool.query("INSERT INTO extraction_runs(patient_id,document_id,kind,status,model,schema_version,created_by,created_at) VALUES($1,$2,$3,'running','synthetic',2,$4,now()-interval '4 minutes')",[patient,doc,kind,actor]);
+  const removed=await request(admin,`/api/patients/${patient}/documents/${doc}`,{method:'DELETE',headers:{origin:'null','x-csrf-token':await token(admin)}});assert.equal(removed.status,200);
+  assert.equal((await request(admin,`/api/patients/${patient}/documents`)).body.documents.length,0);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM consultation_import_records WHERE document_id=$1',[doc])).rows[0].n,7);
+ }
  }finally{await pool.end()}
 });

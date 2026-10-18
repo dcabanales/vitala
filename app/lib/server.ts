@@ -34,7 +34,8 @@ export function failure(e:unknown){
   if(m==='SIZE')return problem('El archivo o la solicitud supera el límite permitido.',413);
   if(m==='VALIDATION')return problem('Datos no válidos.',400);
   if(m==='PASSWORD')return problem('La contraseña debe tener entre 14 y 256 caracteres.',400);
-  if(m==='IDENTITY_REVIEW')return problem('Revisa cada diferencia de identidad y explica por qué el documento pertenece al paciente.',409);
+  if(m==='IDENTITY_REVIEW')return problem('Marca cada casilla de verificación de identidad para confirmar que el documento pertenece al paciente.',409);
+  if(m==='DOCUMENT_BUSY')return problem('El documento tiene una lectura en curso. Espera a que termine y vuelve a quitarlo.',409);
   if(m==='CONFLICT')return problem('Los datos han cambiado. Recarga antes de guardar.',409);
   if(m==='AI_AUTH'||m==='AI_ACCESS')return problem('La conexión con la IA necesita revisión de la clave o de sus permisos. El documento se conserva.',503);
   if(m==='AI_MODEL')return problem('El modelo de IA configurado no está disponible. Revisa la configuración; el documento se conserva.',503);

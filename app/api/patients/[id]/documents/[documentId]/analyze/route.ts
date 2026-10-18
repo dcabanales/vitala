@@ -28,15 +28,15 @@ export async function POST(request:Request,{params}:Context){try{
     if(!(await client.query('SELECT 1 FROM medical_documents WHERE patient_id=$1 AND id=$2 AND archived_at IS NULL FOR UPDATE',[id,documentId])).rowCount)throw Error('PATIENT');
     await client.query(`UPDATE extraction_runs SET status='interrupted',finished_at=now(),error_code='INTERRUPTED'
       WHERE status='running' AND created_at<now()-interval '3 minutes'`);
-    const previous=(await client.query('SELECT status FROM extraction_runs WHERE patient_id=$1 AND document_id=$2 AND kind=$3 ORDER BY created_at DESC LIMIT 1',[id,documentId,kind])).rows[0];
+    const previous=(await client.query('SELECT status,consultation_id,examination_id FROM extraction_runs WHERE patient_id=$1 AND document_id=$2 AND kind=$3 ORDER BY created_at DESC LIMIT 1',[id,documentId,kind])).rows[0];
     if(previous?.status==='running')throw Error('AI_BUSY');
-    if(previous?.status==='confirmed'||(previous?.status==='review'&&!parsed.data.replaceReview))throw Error('CONFLICT');
+    if((previous?.status==='confirmed'&&!parsed.data.replaceReview)||(previous?.status==='review'&&!parsed.data.replaceReview))throw Error('CONFLICT');
     const count=await client.query(`SELECT count(*) FILTER(WHERE created_at>now()-interval '24 hours')::int AS daily,
       count(*) FILTER(WHERE status='running')::int AS running FROM extraction_runs`);
     if(count.rows[0].daily>=20)throw new Error('AI_BUDGET');
     if(count.rows[0].running>=2)throw new Error('AI_BUSY');
-    const r=await client.query(`INSERT INTO extraction_runs(patient_id,document_id,kind,status,model,schema_version,created_by)
-      VALUES($1,$2,$3,'running',$4,1,$5) RETURNING id`,[id,documentId,kind,model,user.id]);
+    const r=await client.query(`INSERT INTO extraction_runs(patient_id,document_id,kind,status,model,schema_version,created_by,consultation_id,examination_id)
+      VALUES($1,$2,$3,'running',$4,2,$5,$6,$7) RETURNING id`,[id,documentId,kind,model,user.id,previous?.consultation_id||null,previous?.examination_id||null]);
     return r.rows[0].id as string;
   });
   try{
@@ -56,7 +56,7 @@ export async function POST(request:Request,{params}:Context){try{
 
 export async function PATCH(request:Request,{params}:Context){try{
  const user=await requireUser(request),{id,documentId}=await params;await authorizePatient(user,id,true);
- const req=await boundedRequest(request,90_000),body=z.object({runId:z.string().uuid(),reviewVersion:z.number().int().positive(),draft:z.unknown(),measurementTypeIds:z.array(z.string().uuid().nullable()).max(30).optional()}).strict().safeParse(await req.json());if(!body.success)throw Error('VALIDATION');
+ const req=await boundedRequest(request,300_000),body=z.object({runId:z.string().uuid(),reviewVersion:z.number().int().positive(),draft:z.unknown(),measurementTypeIds:z.array(z.string().uuid().nullable()).max(150).optional()}).strict().safeParse(await req.json());if(!body.success)throw Error('VALIDATION');
  const result=await transaction(async client=>{const run=(await client.query(`SELECT kind,review_version FROM extraction_runs WHERE id=$1 AND patient_id=$2 AND document_id=$3 AND status='review' FOR UPDATE`,[body.data.runId,id,documentId])).rows[0];if(!run)throw Error('PATIENT');if(run.review_version!==body.data.reviewVersion)throw Error('CONFLICT');
  const parsed=(run.kind==='examination'?extractedExamination:extractedConsultation).safeParse(body.data.draft);if(!parsed.success)throw Error('VALIDATION');
  const updated=await client.query('UPDATE extraction_runs SET draft=$2,measurement_type_ids=$3,review_version=review_version+1 WHERE id=$1 RETURNING review_version AS "reviewVersion"',[body.data.runId,parsed.data,body.data.measurementTypeIds===undefined?null:JSON.stringify(body.data.measurementTypeIds)]);
