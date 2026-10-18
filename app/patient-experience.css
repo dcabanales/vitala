@@ -58,3 +58,39 @@ h1{font-family:var(--serif);font-weight:400!important;letter-spacing:-1.1px!impo
 .v-patient-narrative h3{margin:0 0 10px;font-size:17px}.v-patient-narrative p{font-size:15px;line-height:1.75}.v-patient-narrative small{display:block;line-height:1.6;color:#637765}
 .v-summary-controls{display:grid;gap:10px;margin-top:16px}.v-summary-controls .v-button{justify-self:start}
 .v-report-paper .v-patient-narrative{max-width:none;break-inside:avoid}
+/* Keep a stable five-item mobile menu regardless of the selected extra section. */
+.v-more-mobile-label{display:none}
+@media(max-width:760px){
+ .v-patient-nav{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:3px}
+ .v-patient-nav>a,.v-more>button{padding-inline:2px;min-width:0;max-width:100%}
+ .v-patient-nav>a>span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px}
+ .v-more>button .v-more-desktop-label{display:none}.v-more>button .v-more-mobile-label{display:block}
+ .v-health-grid{gap:28px}.v-health-grid .v-health-section,.v-health-grid .v-care-summary,.v-health-grid .v-aside-last-visit,.v-health-grid .v-personal-note{margin:0}
+ .v-health-aside>.v-aside-last-visit{order:2}.v-health-aside>.v-care-summary{order:2}
+ .v-health-aside>.v-pending-summary{order:0}
+ .v-more-popover{max-width:calc(100vw - 36px)}
+}
+.v-pending-summary{padding:24px;border-radius:24px;background:#eaf0f5;margin-bottom:24px}.v-pending-preview{display:block;border-top:1px solid #d5dfe5;padding:14px 0}.v-pending-preview strong,.v-pending-preview small{display:block;overflow-wrap:anywhere}.v-pending-preview small{margin-top:5px;color:#62717b}
+.v-pending-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}.v-pending-card{margin:0;min-width:0}.v-pending-card h2{overflow-wrap:anywhere;font-size:20px}.v-pending-card .v-prose{white-space:pre-wrap;overflow-wrap:anywhere}
+@media(max-width:760px){.v-pending-grid{grid-template-columns:1fr}.v-health-grid .v-pending-summary{margin:0}.v-pending-summary{padding:22px}}
+@media(max-width:760px){
+ .v-context-back,.v-context-report{flex-shrink:0;white-space:nowrap}
+ .v-context-location{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-left:10px}
+ .v-mobile-nav a{min-width:0;flex:1;padding-inline:6px}
+}
+
+.v-assistant textarea {
+  display: block;
+  box-sizing: border-box;
+  border: 1px solid #dce3d4;
+  border-radius: 14px;
+  background: #fafbf7;
+  color: #24443a;
+  font: inherit;
+  padding: 16px;
+  min-height: 140px;
+  resize: vertical;
+}
+.v-assistant textarea:focus-visible { outline: 2px solid #658a78; outline-offset: 3px; }
+.v-assistant blockquote { margin: 16px 0; padding: 12px 18px; border-left: 3px solid #658a78; overflow-wrap: anywhere; }
+.v-assistant { overflow-wrap: anywhere; }

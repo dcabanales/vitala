@@ -22,6 +22,7 @@ export function ExtractionReview({patientId,documentId,initialKind,fileName,mime
   const [examination,setExamination]=useState<ExaminationDraft|null>(null),[types,setTypes]=useState<MeasurementType[]>([]);
   const [typeIds,setTypeIds]=useState<(string|null)[]>([]),[kindChoice,setKindChoice]=useState<'consultation'|'examination'|'prescription'>(initialKind);
   const [acknowledged,setAcknowledged]=useState<string[]>([]),[reviewed,setReviewed]=useState(false);
+  const [taskKind,setTaskKind]=useState<string|null>(null);
   const [loading,setLoading]=useState(true);
   const [busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
   const base=`/api/patients/${patientId}/documents/${documentId}/analyze`;
@@ -31,6 +32,7 @@ export function ExtractionReview({patientId,documentId,initialKind,fileName,mime
   },[]);
   const load=useCallback(async()=>{
     const response=await fetch(base,{cache:'no-store'}),data=await response.json();if(!response.ok)throw Error(data.error);
+    setTaskKind(data.careTask?.kind||null);if(data.careTask)setKindChoice(data.careTask.kind);
     const latest:Run|null=data.runs[0]||null;setRun(latest);setAcknowledged([]);setReviewed(false);
     if(latest){setKindChoice(latest.purpose==='prescription'?'prescription':latest.kind);setConsultation(latest.kind==='consultation'?latest.draft as ConsultationDraft:null);
       setExamination(latest.kind==='examination'?latest.draft as ExaminationDraft:null)}
@@ -92,10 +94,10 @@ export function ExtractionReview({patientId,documentId,initialKind,fileName,mime
       <DocumentPreview name={fileName} mime={mimeType} href={`/api/patients/${patientId}/documents/${documentId}`}/>
       <RemoveDocument patientId={patientId} documentId={documentId}/>
     </section><section className="v-panel"><div className="v-section-head"><h2>Revisar y corregir datos</h2></div>
-      <div className="v-toolbar"><label>Registro principal<select value={kindChoice} onChange={event=>setKindChoice(event.target.value as 'consultation'|'examination'|'prescription')}>
+      <div className="v-toolbar"><label>Registro principal<select disabled={!!taskKind} value={kindChoice} onChange={event=>setKindChoice(event.target.value as 'consultation'|'examination'|'prescription')}>
         <option value="consultation">Consulta</option><option value="examination">Examen</option><option value="prescription">Receta / tratamiento</option></select></label>
         <button className="v-button" disabled={loading||busy||run?.status==='running'} onClick={analyze}>{busy?'Procesando…':run?.status==='confirmed'?'Completar datos del documento':run?'Volver a extraer del original':'Iniciar lectura con IA'}</button></div>
-      <p className="v-form-note">Se lee el archivo completo. La elección indica dónde guardar el registro principal; las recetas crean tratamientos y medicación sin crear una consulta. alergias, tratamientos, pruebas y otros datos se proponen también.</p>{notice&&<p className="success" role="status">{notice}</p>}{loading&&<p className="v-muted" role="status">Cargando revisión…</p>}{error&&<p className="error" role="alert">{error}</p>}
+      {taskKind&&<p className="v-note">Este archivo pertenece a un pendiente. Al confirmar los datos, se creará el registro y el pendiente quedará completado.</p>}<p className="v-form-note">Se lee el archivo completo. La elección indica dónde guardar el registro principal; las recetas crean tratamientos y medicación sin crear una consulta. alergias, tratamientos, pruebas y otros datos se proponen también.</p>{notice&&<p className="success" role="status">{notice}</p>}{loading&&<p className="v-muted" role="status">Cargando revisión…</p>}{error&&<p className="error" role="alert">{error}</p>}
       {run?.status==='running'&&<p className="v-muted">La lectura está en curso. El estado se actualiza automáticamente.</p>}
       {(run?.status==='failed'||run?.status==='interrupted')&&<p className="v-muted">La lectura falló. El original sigue disponible.</p>}
       {run?.status==='confirmed'&&<p className="success">Esta extracción ya fue confirmada. <a className="v-text-link" href={run.purpose==='prescription'?`/patients/${patientId}/treatments`:`/patients/${patientId}/${run.kind==='examination'?'exams':'consultations'}/${run.examinationId||run.consultationId}`}>Ver registro →</a></p>}

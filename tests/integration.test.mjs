@@ -92,6 +92,18 @@ test('aislamiento A/B, invitación, revocación y vínculos clínicos', {skip:!e
   assert.equal(addedType.status,201);
   assert.equal((await post(patient,'/api/measurement-types',{name:'No autorizado',category:'other',valueKind:'text'})).status,403);
   assert.equal((await post(patient,`/api/patients/${a}/summary`,{})).status,404);
+  assert.equal((await post(patient,`/api/patients/${a}/pending`,{})).status,404);
+  assert.equal((await request(patient,`/api/patients/${a}/pending`)).status,200);
+  assert.equal((await request(patient,`/api/patients/${b}/pending`)).status,404);
+  assert.equal((await post(patient,`/api/patients/${b}/assistant`,{question:'Datos ajenos'})).status,404);
+  assert.equal((await request(patient,`/patients/${b}/assistant`)).status,404);
+  assert.equal((await request(patient,`/patients/${a}/assistant`)).status,200);
+  assert.equal((await post(patient,`/api/patients/${a}/medications/${randomUUID()}/guide`,{})).status,404);
+  const patientTask=(await post(admin,`/api/patients/${a}/pending`,{requestKey:randomUUID(),kind:'examination',title:'Carga del paciente',scheduledDate:null,scheduledTime:null,doctorId:null,centerId:null,specialtyId:null,notes:null,status:'pending'})).body.task;
+  const ownFile=new FormData();ownFile.append('file',new File(['%PDF-1.4\nPaciente ficticio\n%%EOF'],'propio.pdf',{type:'application/pdf'}));ownFile.append('careTaskId',patientTask.id);
+  assert.equal((await request(patient,`/api/patients/${a}/documents`,{method:'POST',body:ownFile,headers:{origin:'null','x-csrf-token':await token(patient)}})).status,201);
+  const ownTask=(await request(patient,`/api/patients/${a}/pending`)).body.tasks.find(t=>t.id===patientTask.id);assert.equal(ownTask.status,'pending');assert.equal(ownTask.hasDocument,true);
+
   assert.equal((await post(patient,`/api/patients/${b}/summary`,{})).status,404);
   const disabledType=await request(admin,'/api/measurement-types',{method:'PATCH',
     body:JSON.stringify({id:addedType.body.type.id,active:false}),
@@ -538,4 +550,83 @@ test('asociación consulta-examen visible en ambos sentidos y aislada por pacien
  const visitPage=await request(admin,`/patients/${patient}/consultations/${visit}`);assert.equal(visitPage.status,200);assert.ok(visitPage.body.includes('/exams/'+exam));
  const examPage=await request(admin,`/patients/${patient}/exams/${exam}`);assert.equal(examPage.status,200);assert.ok(examPage.body.includes('/consultations/'+visit));
  }finally{await pool.end()}
+});
+
+test('pendientes: fecha opcional, idempotencia, cambios de estado y aislamiento',{skip:!enabled||!localDb},async()=>{
+ const admin=client();await login(admin,email,password);
+ const patient=(await post(admin,'/api/patients',{name:'Agenda ficticia',authorizedBy:'Prueba',basis:'Prueba local'})).body.patient.id;
+ const other=(await post(admin,'/api/patients',{name:'Otra agenda ficticia',authorizedBy:'Prueba',basis:'Prueba local'})).body.patient.id;
+ const payload={requestKey:randomUUID(),kind:'examination',title:'Prueba pendiente ficticia',scheduledDate:null,scheduledTime:null,doctorId:null,centerId:null,specialtyId:null,notes:'Preparación documentada de ejemplo',status:'pending'};
+ const base=`/api/patients/${patient}/pending`;
+ const created=await post(admin,base,payload);assert.equal(created.status,201);const task=created.body.task;
+ assert.equal((await post(admin,base,payload)).body.task.id,task.id);
+ assert.equal((await request(admin,base)).body.tasks.length,1);
+ assert.equal((await post(admin,base,{...payload,requestKey:randomUUID(),scheduledDate:'2026-02-30'})).status,400);
+ assert.equal((await post(admin,base,{...payload,requestKey:randomUUID(),scheduledTime:'10:30'})).status,400);
+ const {requestKey,...fields}=payload;
+ const change=async(patientId,body)=>request(admin,`/api/patients/${patientId}/pending/${task.id}`,{method:'PATCH',headers:{origin:'null','content-type':'application/json','x-csrf-token':await token(admin)},body:JSON.stringify(body)});
+ assert.equal((await change(other,{...fields,version:1})).status,404);
+ const scheduled={...fields,version:1,scheduledDate:'2026-11-20',scheduledTime:'10:30'};
+ assert.equal((await change(patient,scheduled)).status,200);
+ assert.equal((await change(patient,scheduled)).status,409);
+ const listed=(await request(admin,base)).body.tasks[0];assert.equal(listed.scheduledTime,'10:30');assert.equal(listed.version,2);
+ const summary=await request(admin,`/patients/${patient}`);assert.equal(summary.status,200);assert.ok(summary.body.includes('Prueba pendiente ficticia'));
+ const page=await request(admin,`/patients/${patient}/pending`);assert.equal(page.status,200);assert.ok(page.body.includes('Consultas y exámenes pendientes'));
+ assert.equal((await change(patient,{...scheduled,version:2,status:'completed'})).status,200);
+ assert.equal((await request(admin,base)).body.tasks[0].status,'completed');
+ assert.ok(!(await request(admin,`/patients/${patient}`)).body.includes('Prueba pendiente ficticia'));
+ assert.equal((await change(patient,{...scheduled,version:3,status:'cancelled'})).status,200);
+ assert.equal((await change(patient,{...scheduled,version:4,status:'pending'})).status,200);
+});
+
+test('documento de pendiente: aislamiento, revisión y cierre atómico e idempotente',{skip:!enabled||!localDb},async()=>{
+ const admin=client();await login(admin,email,password);const pool=new pg.Pool({connectionString:process.env.SMOKE_DATABASE_URL,max:1});
+ try{
+ const name='Pendiente con documento ficticio';const patient=(await post(admin,'/api/patients',{name,authorizedBy:'Prueba',basis:'Prueba local'})).body.patient.id;
+ const other=(await post(admin,'/api/patients',{name:'Otro pendiente',authorizedBy:'Prueba',basis:'Prueba local'})).body.patient.id;
+ const task=(await post(admin,`/api/patients/${patient}/pending`,{requestKey:randomUUID(),kind:'consultation',title:'Consulta pendiente',scheduledDate:null,scheduledTime:null,doctorId:null,centerId:null,specialtyId:null,notes:null,status:'pending'})).body.task;
+ assert.ok(task);
+ const upload=async(pid)=>{const form=new FormData();form.append('file',new File(['%PDF-1.4\n%%EOF'],'pendiente.pdf',{type:'application/pdf'}));form.append('careTaskId',task.id);return request(admin,`/api/patients/${pid}/documents`,{method:'POST',body:form,headers:{origin:'null','x-csrf-token':await token(admin)}})};
+ assert.equal((await upload(other)).status,404);
+ const uploaded=await upload(patient);assert.equal(uploaded.status,201,JSON.stringify(uploaded.body));const doc=uploaded.body.document.id;
+ assert.equal((await request(admin,`/api/patients/${patient}/pending`)).body.tasks[0].status,'pending');
+ assert.equal((await post(admin,`/api/patients/${patient}/documents/${doc}/analyze`,{kind:'examination'})).status,409);
+ const actor=(await pool.query('SELECT id FROM users WHERE email=$1',[email])).rows[0].id;
+ const draft={patientName:name,eventDate:null,doctorName:null,centerName:null,specialtyName:null,reason:'Prueba',symptoms:null,summary:'Consulta ficticia',findings:null,impression:null,conclusion:null,recommendations:null,followUp:null,evidence:[],clinicalRecords:[]};
+ const run=(await pool.query("INSERT INTO extraction_runs(patient_id,document_id,kind,status,model,schema_version,draft,created_by) VALUES($1,$2,'consultation','review','synthetic',2,$3,$4) RETURNING id",[patient,doc,draft,actor])).rows[0].id;
+ const url=`/api/patients/${patient}/extractions/${run}/confirm`;const confirmed=await post(admin,url,{draft});assert.equal(confirmed.status,200,JSON.stringify(confirmed.body));
+ assert.equal((await post(admin,url,{draft})).status,200);
+ const saved=(await request(admin,`/api/patients/${patient}/pending`)).body.tasks[0];assert.equal(saved.status,'completed');assert.ok(saved.consultationId);
+ assert.equal((await pool.query('SELECT count(*)::int n FROM consultations WHERE patient_id=$1',[patient])).rows[0].n,1);
+ }finally{await pool.end()}
+});
+
+test('explicación de medicación reutiliza caché y no acepta registros de otro paciente',{skip:!enabled||!localDb},async()=>{
+ const admin=client();await login(admin,email,password);const pool=new pg.Pool({connectionString:process.env.SMOKE_DATABASE_URL,max:1});
+ try{
+ const patient=(await post(admin,'/api/patients',{name:'Guía ficticia',authorizedBy:'Prueba',basis:'Prueba local'})).body.patient.id;
+ const other=(await post(admin,'/api/patients',{name:'Otra guía',authorizedBy:'Prueba',basis:'Prueba local'})).body.patient.id;
+ const actor=(await pool.query('SELECT id FROM users WHERE email=$1',[email])).rows[0].id;
+ const name='Medicamento de prueba '+randomUUID(),med=(await pool.query('INSERT INTO medications(name) VALUES($1) RETURNING id',[name])).rows[0].id;
+ const record=(await pool.query("INSERT INTO patient_medications(patient_id,medication_id,status) VALUES($1,$2,'published') RETURNING id",[patient,med])).rows[0].id;
+ const {createHash}=await import('node:crypto');const hash=createHash('sha256').update(JSON.stringify(['v1',name,null])).digest('hex');
+ await pool.query("INSERT INTO medication_guides(medication_id,source_hash,model,status,content,created_by) VALUES($1,$2,'synthetic','completed','Explicación ficticia',$3)",[med,hash,actor]);
+ const url=`/api/patients/${patient}/medications/${record}/guide`;
+ assert.equal((await request(admin,url)).body.guide.content,'Explicación ficticia');assert.equal((await post(admin,url,{})).body.cached,true);
+ assert.equal((await request(admin,`/api/patients/${other}/medications/${record}/guide`)).status,404);
+ await pool.query('UPDATE medications SET active_ingredient=$2 WHERE id=$1',[med,'Cambio ficticio']);assert.equal((await request(admin,url)).body.guide,null);
+ }finally{await pool.end()}
+});
+
+test('asistente limita el consumo antes de llamar al proveedor y valida preguntas',{skip:!enabled||!localDb},async()=>{
+ const admin=client();await login(admin,email,password);const pool=new pg.Pool({connectionString:process.env.SMOKE_DATABASE_URL,max:1});let ids=[];
+ try{
+ const patient=(await post(admin,'/api/patients',{name:'Asistente ficticio',authorizedBy:'Prueba',basis:'Prueba local'})).body.patient.id;
+ const actor=(await pool.query('SELECT id FROM users WHERE email=$1',[email])).rows[0].id;
+ const url=`/api/patients/${patient}/assistant`;assert.equal((await post(admin,url,{question:''})).status,400);
+ ids=(await pool.query("INSERT INTO assistant_requests(patient_id,user_id,status) SELECT $1,$2,'completed' FROM generate_series(1,10) RETURNING id",[patient,actor])).rows.map(r=>r.id);
+ assert.equal((await post(admin,url,{question:'¿Qué significa HDL?'})).status,429);
+ assert.equal((await post(admin,`/api/patients/${randomUUID()}/assistant`,{question:'Ver datos'})).status,404);
+ assert.equal((await request(admin,`/patients/${patient}/assistant`)).status,200);
+ }finally{if(ids.length)await pool.query('DELETE FROM assistant_requests WHERE id=ANY($1::uuid[])',[ids]);await pool.end()}
 });

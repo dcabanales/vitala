@@ -98,3 +98,16 @@ La migración `018_consultation_records.sql` conserva la procedencia y evita rep
 - En Tratamientos, «Subir receta médica» extrae pautas para revisión humana sin crear una consulta ficticia. El prescriptor es opcional; la fuente y la vigencia documentada se conservan.
 - «Corregir examen» permite seleccionar una consulta del mismo paciente. Ambos detalles muestran el vínculo.
 - Los documentos retirados siguen identificados como tales en la historia y en las fuentes clínicas; retirar el archivo no elimina los registros clínicos confirmados.
+
+### Consultas y exámenes pendientes
+La migración 020 añade seguimiento manual de pendientes. Desde Más → Consultas y exámenes pendientes, el administrador puede crear, editar, programar, completar, cancelar o reabrir consultas y exámenes. Fecha, hora, profesional, centro y especialidad son opcionales; la hora corresponde al centro. Los pacientes solo pueden consultar sus propios pendientes. La tarjeta «Tus próximos pasos» muestra hasta tres pendientes en el resumen. Registrar una fecha no reserva una cita ni envía avisos.
+
+### Pendientes con documentos, explicaciones y asistente
+
+Un pendiente admite un documento opcional. Cargarlo no cierra el seguimiento: la confirmación administrativa de su extracción crea la consulta o examen y completa el pendiente en la misma transacción. El paciente puede cargar su documento y esperar la revisión.
+
+En medicación, «¿Para qué sirve?» muestra una explicación general. El administrador puede generarla una vez; se reutiliza por medicamento y principio activo, sin enviar datos personales. Un cambio de identidad invalida la caché. Límite: 20 generaciones por 24 horas y dos simultáneas.
+
+«Más → Asistente de salud» permite preguntas independientes sobre salud y registros publicados del paciente autorizado. No dispone de herramientas de escritura ni acceso a otros pacientes. Las citas se validan contra los datos enviados. Límite: 10 solicitudes por usuario y 50 globales por 24 horas, dos simultáneas; los intentos fallidos también cuentan. Solo se guarda metadata de uso, no preguntas ni respuestas. Usa `OPENAI_MODEL`, `OPENAI_API_KEY` y Responses con `store:false`. La información educativa de IA puede contener errores; no prescribe ni sustituye atención médica.
+
+Migraciones nuevas: 020, 021 y 022; ejecutar `npm run db:migrate` antes de iniciar la nueva versión (Fly lo realiza en release_command).

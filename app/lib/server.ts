@@ -50,6 +50,11 @@ export function failure(e:unknown){
   if(m==='SUMMARY_EMPTY')return problem('Publica datos clínicos antes de generar el resumen.',400);
   if(m==='SUMMARY_SIZE')return problem('El expediente supera el tamaño admitido para este resumen. No se ha enviado a la IA.',400);
   if(m==='PRESCRIPTION_EMPTY')return problem('La receta necesita al menos una propuesta de tratamiento o medicación. Revisa la lectura antes de confirmar.',400);
+  if(m==='TASK_KIND')return problem('El documento debe confirmarse como el mismo tipo de consulta o examen que el pendiente.',409);
+  if(m==='TASK_STATE')return problem('Reabre el pendiente antes de cargar o confirmar su documento.',409);
+  if(m==='TASK_DOCUMENT')return problem('Este pendiente ya tiene un documento. Continúa su revisión o retíralo antes de cargar otro.',409);
+  if(m==='TASK_COMPLETED')return problem('Este pendiente ya tiene un registro clínico confirmado. Puedes consultarlo desde su enlace.',409);
+  if(m==='GUIDE_BUSY')return problem('Ya se está generando una explicación. Vuelve a abrirla en unos minutos.',429);
   if(m==='AI_BUSY')return problem('Ya hay dos lecturas en curso. Inténtalo de nuevo en unos minutos.',429);
   if(m==='AI_RATE')return problem('El proveedor limitó las solicitudes. Inténtalo más tarde.',429);
   if(m==='AI_PROVIDER'||m==='AI_INCOMPLETE'||m==='AI_INVALID')return problem('La lectura no se completó. Conservamos el documento para reintentar.',502);

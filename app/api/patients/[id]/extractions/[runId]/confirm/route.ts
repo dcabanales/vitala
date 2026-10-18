@@ -1,3 +1,4 @@
+import {completeCareTask} from '../../../../../../lib/complete-care-task';
 import {requireUser,authorizePatient,failure,noCache,boundedRequest} from '../../../../../../lib/server';
 import {transaction} from '../../../../../../lib/db';
 import {extractedConsultation,extractedExamination} from '../../../../../../lib/extraction';
@@ -31,6 +32,7 @@ export async function POST(request:Request,{params}:Context){try{
     if(run.kind==='consultation'){
       const parsed=consultationInput.safeParse(body);if(!parsed.success)throw new Error('VALIDATION');
       if(run.purpose==='prescription'){
+        if((await client.query('SELECT 1 FROM care_tasks WHERE patient_id=$1 AND document_id=$2',[id,run.document_id])).rowCount)throw Error('TASK_KIND');
         const p=parsed.data.draft;
         if(!p.clinicalRecords?.some(r=>r.kind==='medication'||r.kind==='treatment'))throw Error('PRESCRIPTION_EMPTY');
         let doctorId=parsed.data.prescribingDoctorId||null;
@@ -59,6 +61,7 @@ export async function POST(request:Request,{params}:Context){try{
       await client.query('INSERT INTO consultation_documents(patient_id,consultation_id,document_id) VALUES($1,$2,$3)',[id,consultationId,run.document_id]);
       }
       const imported=await importConsultationRecords(client,{patientId:id,consultationId:consultationId!,documentId:run.document_id,actorId:user.id,date:p.eventDate,records:p.clinicalRecords||[]});
+      await completeCareTask(client,id,run.document_id,'consultation',consultationId!,user.id);
       await client.query(`UPDATE extraction_runs SET status='confirmed',reviewed_by=$2,consultation_id=$3,draft=$4,finished_at=now() WHERE id=$1`,
         [runId,user.id,consultationId,p]);
       await client.query(`INSERT INTO audit_events(actor_id,action,resource_type,resource_id,patient_id)
@@ -97,6 +100,7 @@ export async function POST(request:Request,{params}:Context){try{
         [id,typeId,examinationId,run.document_id,p.eventDate,kind,m.numericValue,kind==='text'?m.originalValue:null,m.originalValue,m.unit,m.referenceRange,user.id,m.typeName]);
     }
     await importConsultationRecords(client,{patientId:id,consultationId:null,examinationId:examinationId!,documentId:run.document_id,actorId:user.id,date:p.eventDate,records:p.clinicalRecords||[]});
+    await completeCareTask(client,id,run.document_id,'examination',examinationId!,user.id);
     await client.query(`UPDATE extraction_runs SET status='confirmed',reviewed_by=$2,examination_id=$3,draft=$4,finished_at=now() WHERE id=$1`,
       [runId,user.id,examinationId,p]);
     await client.query(`INSERT INTO audit_events(actor_id,action,resource_type,resource_id,patient_id)

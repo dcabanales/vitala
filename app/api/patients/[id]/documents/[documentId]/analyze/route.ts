@@ -12,12 +12,16 @@ export async function GET(req:Request,{params}:Context){try{
     input_tokens AS "inputTokens",output_tokens AS "outputTokens",created_at AS "createdAt",finished_at AS "finishedAt",consultation_id AS "consultationId",examination_id AS "examinationId"
     FROM extraction_runs WHERE patient_id=$1 AND document_id=$2 ORDER BY created_at DESC LIMIT 20`,[id,documentId]);
   const patient=(await query<{name:string;birthDate:string|null}>('SELECT name,birth_date AS "birthDate" FROM patients WHERE id=$1',[id])).rows[0];
-  return Response.json({runs:r.rows.map(run=>({...run,identityIssues:identityIssues(run.originalDraft||run.draft||{},patient)}))},{headers:noCache});
+  const careTask=(await query('SELECT kind FROM care_tasks WHERE patient_id=$1 AND document_id=$2',[id,documentId])).rows[0]||null;
+  return Response.json({careTask,runs:r.rows.map(run=>({...run,identityIssues:identityIssues(run.originalDraft||run.draft||{},patient)}))},{headers:noCache});
 }catch(e){return failure(e)}}
 export async function POST(request:Request,{params}:Context){try{
   const user=await requireUser(request),{id,documentId}=await params;await authorizePatient(user,id,true);
   const req=await boundedRequest(request,2048),parsed=input.safeParse(await req.json());if(!parsed.success)throw new Error('VALIDATION');
   const kind=parsed.data.kind;if(parsed.data.purpose==='prescription'&&kind!=='consultation')throw Error('VALIDATION');
+  const task=(await query('SELECT kind,status,consultation_id,examination_id FROM care_tasks WHERE patient_id=$1 AND document_id=$2',[id,documentId])).rows[0];
+  if(task&&(task.kind!==kind||parsed.data.purpose==='prescription'))throw Error('TASK_KIND');
+  if(task&&task.status!=='pending'&&!task.consultation_id&&!task.examination_id)throw Error('TASK_STATE');
   if(!process.env.OPENAI_API_KEY)throw new Error('AI_CONFIG');
   const doc=await query<{file_name:string;mime_type:string;object_key:string;patient_name:string}>(`SELECT d.file_name,d.mime_type,d.object_key,p.name AS patient_name
     FROM medical_documents d JOIN patients p ON p.id=d.patient_id WHERE d.patient_id=$1 AND d.id=$2 AND d.status='ready' AND d.archived_at IS NULL`,[id,documentId]);

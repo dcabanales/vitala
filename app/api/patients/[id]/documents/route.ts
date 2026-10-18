@@ -23,13 +23,24 @@ export async function POST(request:Request,{params}:Context){try{
   const user=await requireUser(request),{id}=await params;await authorizePatient(user,id,user.role==='admin');
   const req=await boundedRequest(request,11*1024*1024),form=await req.formData(),file=form.get('file');
   if(!(file instanceof File)||!types.includes(file.type)||file.size<1||file.size>10*1024*1024)throw new Error('VALIDATION');
+  const careTaskId=String(form.get('careTaskId')||'')||null;
+  if(careTaskId&&!/^[0-9a-f-]{36}$/i.test(careTaskId))throw Error('VALIDATION');
   const bytes=new Uint8Array(await file.arrayBuffer());if(!validSignature(file.type,bytes))throw new Error('VALIDATION');
   const sha256=createHash('sha256').update(bytes).digest('hex');
   const existing=await query('SELECT id FROM medical_documents WHERE patient_id=$1 AND sha256=$2 AND status=$3 AND archived_at IS NULL',[id,sha256,'ready']);
   if(existing.rowCount)return Response.json({error:'Este documento ya está registrado para el paciente.',documentId:existing.rows[0].id},{status:409,headers:noCache});
   const docId=randomUUID(),key=`patients/${id}/documents/${docId}`,name=file.name.slice(0,200)||'Documento';
-  await query(`INSERT INTO medical_documents(id,patient_id,file_name,mime_type,byte_size,sha256,object_key,created_by,visible_to_patient)
+  await transaction(async client=>{
+    if(careTaskId){
+      const task=(await client.query('SELECT * FROM care_tasks WHERE patient_id=$1 AND id=$2 FOR UPDATE',[id,careTaskId])).rows[0];
+      if(!task)throw Error('PATIENT');if(task.status!=='pending')throw Error('TASK_STATE');
+      if(task.document_id&&(await client.query("SELECT 1 FROM medical_documents WHERE id=$1 AND archived_at IS NULL AND status IN ('pending','ready')",[task.document_id])).rowCount)throw Error('TASK_DOCUMENT');
+    }
+  await client.query(`INSERT INTO medical_documents(id,patient_id,file_name,mime_type,byte_size,sha256,object_key,created_by,visible_to_patient)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,[docId,id,name,file.type,bytes.length,sha256,key,user.id,user.role==='patient']);
+
+    if(careTaskId)await client.query('UPDATE care_tasks SET document_id=$3,version=version+1,updated_at=now() WHERE patient_id=$1 AND id=$2',[id,careTaskId,docId]);
+  });
   try{
     await putObject(key,bytes,file.type);
     await transaction(async client=>{

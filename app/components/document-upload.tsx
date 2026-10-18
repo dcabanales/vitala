@@ -1,6 +1,6 @@
 'use client';
 import {useEffect,useId,useState} from 'react';
-export function DocumentUpload({patientId,kind,onCancel,onUploaded,personal=false}:{personal?:boolean;patientId:string;kind?:'consultation'|'examination'|'prescription';onCancel:()=>void;onUploaded?:()=>void}){
+export function DocumentUpload({patientId,kind,careTaskId,onCancel,onUploaded,personal=false}:{careTaskId?:string;personal?:boolean;patientId:string;kind?:'consultation'|'examination'|'prescription';onCancel:()=>void;onUploaded?:()=>void}){
  const helpId=useId();
  const [dragging,setDragging]=useState(false);
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[file,setFile]=useState<File|null>(null),[preview,setPreview]=useState('');
@@ -8,7 +8,7 @@ export function DocumentUpload({patientId,kind,onCancel,onUploaded,personal=fals
  const fileIssue=!file?'Selecciona o arrastra un archivo para continuar.':!file.size?'El archivo está vacío. Selecciona otro.':file.size>10*1024*1024?'El archivo supera los 10 MB. Selecciona uno más pequeño.':!['application/pdf','image/jpeg','image/png','image/webp'].includes(file.type)?'Formato no compatible. Usa PDF, JPG, PNG o WebP.':'';
  function selectFile(next:File|null){setFile(next);setError('')}
  async function upload(event:React.FormEvent<HTMLFormElement>){event.preventDefault();if(busy)return;if(fileIssue){setError(fileIssue);return}setBusy(true);setError('');try{
-  const data=new FormData();if(file)data.set('file',file);
+  const data=new FormData();if(careTaskId)data.set('careTaskId',careTaskId);if(file)data.set('file',file);
   if(!(file instanceof File)||!file.size)throw Error('Selecciona un PDF o una imagen.');
   if(file.size>10*1024*1024)throw Error('El archivo supera el límite de 10 MB.');
   const tokenResponse=await fetch('/api/auth/csrf',{cache:'no-store'});if(!tokenResponse.ok)throw Error('No se pudo verificar la sesión.');
