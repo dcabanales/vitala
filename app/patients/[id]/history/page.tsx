@@ -8,7 +8,7 @@ import {authorizePatient} from '../../../lib/server';
 import {query} from '../../../lib/db';
 
 export const dynamic='force-dynamic';
-type Event={id:string;kind:string;title:string;detail:string|null;eventDate:string|null;specialty:string|null;status:string};
+type Event={withdrawn:boolean;id:string;kind:string;title:string;detail:string|null;eventDate:string|null;specialty:string|null;status:string};
 const names:Record<string,string>={consultation:'Consulta',examination:'Examen',treatment:'Tratamiento',history:'Antecedente',document:'Documento'};
 function dateParam(raw:string|undefined){return raw&&/^\d{4}-\d{2}-\d{2}$/.test(raw)&&!Number.isNaN(Date.parse(raw))?raw:null}
 export default async function History({params,searchParams}:{params:Promise<{id:string}>;searchParams:Promise<{kind?:string;from?:string;to?:string;specialty?:string}>}){
@@ -20,7 +20,7 @@ export default async function History({params,searchParams}:{params:Promise<{id:
   const from=dateParam(filters.from),to=dateParam(filters.to);
   const specialty=filters.specialty&&/^[0-9a-f-]{36}$/i.test(filters.specialty)?filters.specialty:null;
   const specialties=await query<{id:string;name:string}>('SELECT id,name FROM medical_specialties WHERE active ORDER BY name');
-  const events=await query<Event>(`SELECT id,kind,title,detail,event_date AS "eventDate",specialty,status FROM (
+  const events=await query<Event>(`SELECT id,kind,title,detail,event_date AS "eventDate",specialty,status,(kind='document' AND EXISTS(SELECT 1 FROM medical_documents removed WHERE removed.id=timeline.id AND removed.archived_at IS NOT NULL)) AS withdrawn FROM (
     SELECT c.id,'consultation'::text AS kind,'Consulta médica'::text AS title,
       COALESCE(NULLIF(c.summary,''),NULLIF(c.reason,'')) AS detail,c.event_date,
       COALESCE(s.name,c.specialty_as_documented) AS specialty,c.specialty_id,c.status,c.created_at
@@ -62,8 +62,8 @@ export default async function History({params,searchParams}:{params:Promise<{id:
       <button className="v-button v-secondary">Aplicar filtros</button></form>
     {!events.rowCount&&<div className="v-empty"><p>No hay eventos documentados para estos filtros.</p></div>}
     <div className="v-timeline">{events.rows.map(event=><Link href={href(event)} className="v-timeline-item" key={event.kind+event.id}>
-      <DateMark date={event.eventDate}/><div><small>{event.eventDate?friendlyDate(event.eventDate):'Fecha no documentada'} · {names[event.kind]}{event.status==='draft'?' · Borrador':''}</small>
-      <h2>{event.title}</h2>{event.specialty&&<p>{event.specialty}</p>}{event.detail&&<p className="v-muted v-line-clamp">{event.detail}</p>}</div><Icon name="arrow" size={18}/>
+      <DateMark date={event.eventDate}/><div><small>{event.eventDate?friendlyDate(event.eventDate):'Fecha no documentada'} · {names[event.kind]}{event.withdrawn?' · Documento retirado':event.status==='draft'?' · Borrador':''}</small>
+      <h2>{event.title}</h2>{event.withdrawn&&<p className="v-muted">Retirado de la biblioteca. Se conserva esta referencia histórica.</p>}{event.specialty&&<p>{event.specialty}</p>}{event.detail&&<p className="v-muted v-line-clamp">{event.detail}</p>}</div><Icon name="arrow" size={18}/>
     </Link>)}</div>
   </main>;
 }

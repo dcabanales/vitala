@@ -91,6 +91,8 @@ test('aislamiento A/B, invitación, revocación y vínculos clínicos', {skip:!e
   const addedType=await post(admin,'/api/measurement-types',{name:typeName,category:'laboratory',valueKind:'number',defaultUnit:'U/L'});
   assert.equal(addedType.status,201);
   assert.equal((await post(patient,'/api/measurement-types',{name:'No autorizado',category:'other',valueKind:'text'})).status,403);
+  assert.equal((await post(patient,`/api/patients/${a}/summary`,{})).status,404);
+  assert.equal((await post(patient,`/api/patients/${b}/summary`,{})).status,404);
   const disabledType=await request(admin,'/api/measurement-types',{method:'PATCH',
     body:JSON.stringify({id:addedType.body.type.id,active:false}),
     headers:{origin:'null','content-type':'application/json','x-csrf-token':await token(admin)}});
@@ -453,5 +455,87 @@ test('lectura general desde ambos accesos, complementos idempotentes y retirada 
   assert.equal((await request(admin,`/api/patients/${patient}/documents`)).body.documents.length,0);
   assert.equal((await pool.query('SELECT count(*)::int AS n FROM consultation_import_records WHERE document_id=$1',[doc])).rows[0].n,7);
  }
+ }finally{await pool.end()}
+});
+
+test('una lectura activa del mismo documento no se confunde con el límite global', {skip:!enabled||!localDb}, async()=>{
+ const admin=client();await login(admin,email,password);
+ const patientId=(await post(admin,'/api/patients',{name:'Lectura en curso ficticia',authorizedBy:'Prueba',basis:'Prueba local'})).body.patient.id;
+ const form=new FormData();form.append('file',new File(['%PDF-1.4\n%%EOF'],'lectura-en-curso.pdf',{type:'application/pdf'}));
+ const uploaded=await request(admin,`/api/patients/${patientId}/documents`,{method:'POST',body:form,headers:{origin:'null','x-csrf-token':await token(admin)}});
+ assert.equal(uploaded.status,201);
+ const documentId=uploaded.body.document.id,pool=new pg.Pool({connectionString:process.env.SMOKE_DATABASE_URL,max:1});
+ try{
+  const actor=(await pool.query('SELECT id FROM users WHERE email=$1',[email])).rows[0].id;
+  await pool.query("INSERT INTO extraction_runs(patient_id,document_id,kind,status,model,schema_version,created_by) VALUES($1,$2,'consultation','running','synthetic',2,$3)",[patientId,documentId,actor]);
+  for(const kind of ['consultation','examination']){
+   const result=await post(admin,`/api/patients/${patientId}/documents/${documentId}/analyze`,{kind});
+   assert.equal(result.status,429);
+   assert.match(result.body.error,/Este documento ya se está leyendo/);
+  }
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM extraction_runs WHERE document_id=$1',[documentId])).rows[0].n,1);
+ }finally{
+  await pool.query("UPDATE extraction_runs SET status='interrupted',finished_at=now() WHERE document_id=$1 AND status='running'",[documentId]);await pool.end();
+ }
+});
+
+test('resumen en caché, invalidación por cambios y reporte sin resumen antiguo',{skip:!enabled||!localDb},async()=>{
+ const admin=client();await login(admin,email,password);
+ const patient=(await post(admin,'/api/patients',{name:'Resumen ficticio',authorizedBy:'Prueba',basis:'Prueba local'})).body.patient.id;
+ const pool=new pg.Pool({connectionString:process.env.SMOKE_DATABASE_URL,max:1});
+ try{
+  const actor=(await pool.query('SELECT id FROM users WHERE email=$1',[email])).rows[0].id;
+  await pool.query("INSERT INTO allergies(patient_id,substance,kind,state,status) VALUES($1,'Sustancia ficticia','allergy','unknown','published')",[patient]);
+  const source={profile:(await pool.query('SELECT extract(year from age(birth_date))::int AS age,sex,blood_group,profile_note FROM patients WHERE id=$1',[patient])).rows,
+   conditions:[],allergies:(await pool.query("SELECT substance,kind,reaction,state,documented_date FROM allergies WHERE patient_id=$1 AND status='published' ORDER BY id",[patient])).rows,history:[],treatments:[],medications:[],consultations:[],examinations:[],measurements:[]};
+  const {createHash}=await import('node:crypto');const hash=createHash('sha256').update('vitala-summary-v1\n'+JSON.stringify(source)).digest('hex');
+  const text='Resumen sintético almacenado para verificar reutilización.';
+  await pool.query("INSERT INTO patient_summaries(patient_id,source_hash,model,status,content,created_by) VALUES($1,$2,'synthetic','completed',$3,$4)",[patient,hash,text,actor]);
+  const cached=await post(admin,`/api/patients/${patient}/summary`,{});assert.equal(cached.status,200,JSON.stringify(cached.body));assert.equal(cached.body.cached,true);
+  for(const path of ['', '/report']){const page=await request(admin,`/patients/${patient}${path}`);assert.equal(page.status,200);assert.ok(page.body.includes(text));}
+  await pool.query("UPDATE allergies SET reaction='Nuevo dato relevante' WHERE patient_id=$1",[patient]);
+  for(const path of ['', '/report']){const page=await request(admin,`/patients/${patient}${path}`);assert.equal(page.status,200);assert.ok(page.body.includes('Hay datos nuevos'));assert.ok(!page.body.includes(text));}
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM patient_summaries WHERE patient_id=$1',[patient])).rows[0].n,1);
+ }finally{await pool.end()}
+});
+
+test('receta crea tratamientos con prescriptor opcional sin consulta ficticia',{skip:!enabled||!localDb},async()=>{
+ const admin=client();await login(admin,email,password);const pool=new pg.Pool({connectionString:process.env.SMOKE_DATABASE_URL,max:1});
+ try{
+ const actor=(await pool.query('SELECT id FROM users WHERE email=$1',[email])).rows[0].id;
+ const patient=(await post(admin,'/api/patients',{name:'Receta ficticia',authorizedBy:'Prueba',basis:'Prueba local'})).body.patient.id;
+ const file=new FormData();file.append('file',new File(['%PDF-1.4\n%%EOF'],'receta-ficticia.pdf',{type:'application/pdf'}));
+ const doc=(await request(admin,`/api/patients/${patient}/documents`,{method:'POST',body:file,headers:{origin:'null','x-csrf-token':await token(admin)}})).body.document.id;
+ const doctor=(await pool.query("INSERT INTO doctors(name) VALUES($1) RETURNING id",['Prescriptor ficticio '+randomUUID()])).rows[0].id;
+ const record={kind:'medication',name:'Medicamento ficticio',detail:'Pauta de ejemplo',phase:'unknown',certainty:'confirmed',originalValue:null,numericValue:null,unit:null,referenceRange:null,dose:'Dosis ficticia',frequency:'Frecuencia ficticia',route:null,evidence:'Receta de prueba',page:'1'};
+ const draft={patientName:'Receta ficticia',eventDate:null,doctorName:'Doctor leído',centerName:null,specialtyName:null,reason:null,symptoms:null,summary:null,findings:null,impression:null,conclusion:null,recommendations:null,followUp:null,evidence:[],clinicalRecords:[record]};
+ const run=(await pool.query("INSERT INTO extraction_runs(patient_id,document_id,kind,purpose,status,model,schema_version,draft,created_by) VALUES($1,$2,'consultation','prescription','review','synthetic',2,$3,$4) RETURNING id",[patient,doc,draft,actor])).rows[0].id;
+ const url=`/api/patients/${patient}/extractions/${run}/confirm`;
+ const saved=await post(admin,url,{draft,prescribingDoctorId:doctor});assert.equal(saved.status,200,JSON.stringify(saved.body));assert.ok(saved.body.prescription);
+ assert.equal((await post(admin,url,{draft})).body.prescription.alreadyConfirmed,true);
+ assert.equal((await pool.query('SELECT count(*)::int AS n FROM consultations WHERE patient_id=$1',[patient])).rows[0].n,0);
+ const treatment=(await pool.query('SELECT doctor_id,state FROM treatments WHERE patient_id=$1',[patient])).rows[0];assert.equal(treatment.doctor_id,doctor);assert.equal(treatment.state,'unknown');
+ assert.equal((await pool.query('SELECT count(*)::int AS n FROM patient_medications WHERE patient_id=$1',[patient])).rows[0].n,1);
+ await request(admin,`/api/patients/${patient}/documents/${doc}`,{method:'DELETE',headers:{origin:'null','x-csrf-token':await token(admin)}});
+ const history=await request(admin,`/patients/${patient}/history`);assert.equal(history.status,200);assert.ok(history.body.includes('Documento retirado'));
+ }finally{await pool.end()}
+});
+
+test('asociación consulta-examen visible en ambos sentidos y aislada por paciente',{skip:!enabled||!localDb},async()=>{
+ const admin=client();await login(admin,email,password);
+ const patient=(await post(admin,'/api/patients',{name:'Vínculo ficticio',authorizedBy:'Prueba',basis:'Prueba local'})).body.patient.id;
+ const other=(await post(admin,'/api/patients',{name:'Otro vínculo ficticio',authorizedBy:'Prueba',basis:'Prueba local'})).body.patient.id;
+ const pool=new pg.Pool({connectionString:process.env.SMOKE_DATABASE_URL,max:1});
+ try{
+ const actor=(await pool.query('SELECT id FROM users WHERE email=$1',[email])).rows[0].id;
+ const visit=(await pool.query("INSERT INTO consultations(patient_id,status,created_by,reason) VALUES($1,'published',$2,'Consulta vinculada de prueba') RETURNING id",[patient,actor])).rows[0].id;
+ const foreign=(await pool.query("INSERT INTO consultations(patient_id,status,created_by) VALUES($1,'published',$2) RETURNING id",[other,actor])).rows[0].id;
+ const exam=(await post(admin,`/api/patients/${patient}/examinations`,{name:'Examen vinculado ficticio',status:'published'})).body.examination.id;
+ const payload={version:1,name:'Examen vinculado ficticio',eventDate:null,indication:null,findings:null,conclusion:null,status:'published',changeReason:'Vincular consulta',consultationId:foreign};
+ const update=p=>request(admin,`/api/patients/${patient}/examinations/${exam}`,{method:'PATCH',headers:{origin:'null','content-type':'application/json','x-csrf-token':p.token},body:JSON.stringify(p.body)});
+ assert.equal((await update({token:await token(admin),body:payload})).status,404);
+ assert.equal((await update({token:await token(admin),body:{...payload,consultationId:visit}})).status,200);
+ const visitPage=await request(admin,`/patients/${patient}/consultations/${visit}`);assert.equal(visitPage.status,200);assert.ok(visitPage.body.includes('/exams/'+exam));
+ const examPage=await request(admin,`/patients/${patient}/exams/${exam}`);assert.equal(examPage.status,200);assert.ok(examPage.body.includes('/consultations/'+visit));
  }finally{await pool.end()}
 });

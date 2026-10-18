@@ -10,6 +10,6 @@ export default async function Review({params,searchParams}:{params:Promise<{id:s
   try{await authorizePatient(user,id,true)}catch{notFound()}
   const doc=await query<{file_name:string;mime_type:string}>(`SELECT file_name,mime_type FROM medical_documents WHERE patient_id=$1 AND id=$2 AND status='ready'`,[id,documentId]);
   if(!doc.rowCount)notFound();
-  const kind=(await searchParams).kind==='examination'?'examination':'consultation';
+  const requested=(await searchParams).kind;const kind=requested==='prescription'?'prescription':requested==='examination'?'examination':'consultation';
   return <main className="v-main"><Link href={`/patients/${id}/documents`} className="v-back">← Documentos</Link><p className="v-eyebrow">LECTURA ASISTIDA</p><h1>Revisar extracción</h1><p className="v-muted">{doc.rows[0].file_name}</p><ExtractionReview patientId={id} documentId={documentId} initialKind={kind} fileName={doc.rows[0].file_name} mimeType={doc.rows[0].mime_type}/></main>
 }

@@ -1,4 +1,5 @@
 'use client';
+import {CatalogPicker} from '../../../../../components/catalog-picker';
 import {ClinicalRecordProposals} from '../../../../../components/clinical-record-proposals';
 import {RemoveDocument} from '../../../../../components/remove-document';
 import type {ClinicalRecord} from '../../../../../lib/consultation-records';
@@ -13,13 +14,13 @@ type ConsultationDraft={patientName:string|null;patientBirthDate?:string|null;pa
 type Measurement={typeName:string;originalValue:string;numericValue:string|null;unit:string|null;referenceRange:string|null};
 type ExaminationDraft={patientName:string|null;patientBirthDate?:string|null;patientIdentifier?:string|null;name:string|null;eventDate:string|null;doctorName:string|null;centerName:string|null;
   specialtyName:string|null;indication:string|null;findings:string|null;conclusion:string|null;clinicalRecords?:ClinicalRecord[];measurements:Measurement[];evidence:Evidence[]};
-type Run={measurementTypeIds?:(string|null)[]|null;reviewVersion:number;identityIssues?:IdentityIssue[];originalDraft?:{patientName?:string|null;patientBirthDate?:string|null;patientIdentifier?:string|null};id:string;kind:'consultation'|'examination';status:string;draft:ConsultationDraft|ExaminationDraft|null;
+type Run={purpose?:'clinical'|'prescription';measurementTypeIds?:(string|null)[]|null;reviewVersion:number;identityIssues?:IdentityIssue[];originalDraft?:{patientName?:string|null;patientBirthDate?:string|null;patientIdentifier?:string|null};id:string;kind:'consultation'|'examination';status:string;draft:ConsultationDraft|ExaminationDraft|null;
   warning:string|null;errorCode:string|null;consultationId:string|null;examinationId:string|null};
 type MeasurementType={id:string;name:string;valueKind:string;defaultUnit:string|null};
-export function ExtractionReview({patientId,documentId,initialKind,fileName,mimeType}:{fileName:string;mimeType:string;patientId:string;documentId:string;initialKind:'consultation'|'examination'}){
+export function ExtractionReview({patientId,documentId,initialKind,fileName,mimeType}:{fileName:string;mimeType:string;patientId:string;documentId:string;initialKind:'consultation'|'examination'|'prescription'}){
   const [run,setRun]=useState<Run|null>(null),[consultation,setConsultation]=useState<ConsultationDraft|null>(null);
   const [examination,setExamination]=useState<ExaminationDraft|null>(null),[types,setTypes]=useState<MeasurementType[]>([]);
-  const [typeIds,setTypeIds]=useState<(string|null)[]>([]),[kindChoice,setKindChoice]=useState<'consultation'|'examination'>(initialKind);
+  const [typeIds,setTypeIds]=useState<(string|null)[]>([]),[kindChoice,setKindChoice]=useState<'consultation'|'examination'|'prescription'>(initialKind);
   const [acknowledged,setAcknowledged]=useState<string[]>([]),[reviewed,setReviewed]=useState(false);
   const [loading,setLoading]=useState(true);
   const [busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
@@ -31,7 +32,7 @@ export function ExtractionReview({patientId,documentId,initialKind,fileName,mime
   const load=useCallback(async()=>{
     const response=await fetch(base,{cache:'no-store'}),data=await response.json();if(!response.ok)throw Error(data.error);
     const latest:Run|null=data.runs[0]||null;setRun(latest);setAcknowledged([]);setReviewed(false);
-    if(latest){setKindChoice(latest.kind);setConsultation(latest.kind==='consultation'?latest.draft as ConsultationDraft:null);
+    if(latest){setKindChoice(latest.purpose==='prescription'?'prescription':latest.kind);setConsultation(latest.kind==='consultation'?latest.draft as ConsultationDraft:null);
       setExamination(latest.kind==='examination'?latest.draft as ExaminationDraft:null)}
   },[base]);
   useEffect(()=>{load().catch(e=>setError(e.message)).finally(()=>setLoading(false));loadTypes().catch(e=>setError(e.message))},[load,loadTypes]);
@@ -46,18 +47,18 @@ export function ExtractionReview({patientId,documentId,initialKind,fileName,mime
   },[run?.id,types]);
   async function csrf(){const response=await fetch('/api/auth/csrf',{cache:'no-store'});if(!response.ok)throw Error('No se pudo verificar la solicitud');return (await response.json()).token}
   async function analyze(){if(draft&&run?.status==='review'&&!window.confirm('Una nueva lectura reemplazará las correcciones de esta pantalla. ¿Continuar?'))return;setBusy(true);setError('');try{
-    const response=await fetch(base,{method:'POST',headers:{'Content-Type':'application/json','x-csrf-token':await csrf()},body:JSON.stringify({kind:kindChoice,replaceReview:run?.status==='review'||run?.status==='confirmed'})});
-    const data=await response.json();if(!response.ok)throw Error(data.error);await load();
+    const response=await fetch(base,{method:'POST',headers:{'Content-Type':'application/json','x-csrf-token':await csrf()},body:JSON.stringify({kind:kindChoice==='prescription'?'consultation':kindChoice,purpose:kindChoice==='prescription'?'prescription':'clinical',replaceReview:run?.status==='review'||run?.status==='confirmed'})});
+    const data=await response.json();if(!response.ok){await load();throw Error(data.error)}await load();
   }catch(e){setError(e instanceof Error?e.message:'No se pudo analizar')}finally{setBusy(false)}}
   useEffect(()=>{if(run?.status!=='running')return;const timer=setInterval(()=>{void load().catch(e=>setError(e.message))},3000);return()=>clearInterval(timer)},[run?.status,load]);
   async function saveDraft(){if(!run||!draft)return;setBusy(true);setError('');try{const r=await fetch(base,{method:'PATCH',headers:{'Content-Type':'application/json','x-csrf-token':await csrf()},body:JSON.stringify({runId:run.id,reviewVersion:run.reviewVersion,draft,measurementTypeIds:kindChoice==='examination'?typeIds:undefined})}),j=await r.json();if(!r.ok)throw Error(j.error);setRun({...run,reviewVersion:j.reviewVersion});setNotice('Correcciones guardadas. Puedes continuar la revisión más tarde.')}catch(e){setError(e instanceof Error?e.message:'No se pudieron guardar las correcciones')}finally{setBusy(false)}}
-  async function confirm(){if(!run)return;if(blockers.length){setError(blockers.join(' '));return}setBusy(true);setError('');try{
-    const identity={reviewVersion:run.reviewVersion,identityAcknowledgements:acknowledged};
+  async function confirm(form:HTMLFormElement){if(!run)return;if(blockers.length){setError(blockers.join(' '));return}setBusy(true);setError('');try{
+    const identity={reviewVersion:run.reviewVersion,identityAcknowledgements:acknowledged,prescribingDoctorId:String(new FormData(form).get('prescribingDoctorId')||'')||null};
     const body=run.kind==='examination'?{draft:examination,measurementTypeIds:typeIds,...identity}:{draft:consultation,...identity};
     const response=await fetch(`/api/patients/${patientId}/extractions/${run.id}/confirm`,{
       method:'POST',headers:{'Content-Type':'application/json','x-csrf-token':await csrf()},body:JSON.stringify(body)});
     const data=await response.json();if(!response.ok)throw Error(data.error);
-    window.location.href=run.kind==='examination'?`/patients/${patientId}/exams/${data.examination.id}`:`/patients/${patientId}/consultations/${data.consultation.id}`;
+    window.location.href=run.purpose==='prescription'?`/patients/${patientId}/treatments`:run.kind==='examination'?`/patients/${patientId}/exams/${data.examination.id}`:`/patients/${patientId}/consultations/${data.consultation.id}`;
   }catch(e){setError(e instanceof Error?e.message:'No se pudo confirmar')}finally{setBusy(false)}}
   function setConsultationField(key:keyof ConsultationDraft,value:string){setConsultation(current=>current?{...current,[key]:value||null}:current)}
   function setExaminationField(key:keyof ExaminationDraft,value:string){setExamination(current=>current?{...current,[key]:value||null}:current)}
@@ -74,6 +75,7 @@ export function ExtractionReview({patientId,documentId,initialKind,fileName,mime
   if(busy)blockers.push('Espera a que termine la operación en curso.');
   if(run?.status!=='review')blockers.push('La lectura debe estar terminada y lista para revisar.');
   if(!identityReady)blockers.push('Marca las casillas de verificación de identidad pendientes.');
+  if(run?.purpose==='prescription'&&!consultation?.clinicalRecords?.some(r=>r.kind==='medication'||r.kind==='treatment'))blockers.push('Revisa la receta: debe contener al menos un tratamiento o medicamento.');
   if(!reviewed)blockers.push('Marca la casilla que confirma que comparaste los datos con el original.');
   if(run?.kind==='examination'&&!examination?.name?.trim())blockers.push('Añade el nombre del examen.');
   examination?.measurements.forEach((m,i)=>{
@@ -90,22 +92,22 @@ export function ExtractionReview({patientId,documentId,initialKind,fileName,mime
       <DocumentPreview name={fileName} mime={mimeType} href={`/api/patients/${patientId}/documents/${documentId}`}/>
       <RemoveDocument patientId={patientId} documentId={documentId}/>
     </section><section className="v-panel"><div className="v-section-head"><h2>Revisar y corregir datos</h2></div>
-      <div className="v-toolbar"><label>Registro principal<select value={kindChoice} onChange={event=>setKindChoice(event.target.value as 'consultation'|'examination')}>
-        <option value="consultation">Consulta</option><option value="examination">Examen</option></select></label>
+      <div className="v-toolbar"><label>Registro principal<select value={kindChoice} onChange={event=>setKindChoice(event.target.value as 'consultation'|'examination'|'prescription')}>
+        <option value="consultation">Consulta</option><option value="examination">Examen</option><option value="prescription">Receta / tratamiento</option></select></label>
         <button className="v-button" disabled={loading||busy||run?.status==='running'} onClick={analyze}>{busy?'Procesando…':run?.status==='confirmed'?'Completar datos del documento':run?'Volver a extraer del original':'Iniciar lectura con IA'}</button></div>
-      <p className="v-form-note">Se lee el archivo completo. La elección indica dónde crear el registro principal; alergias, tratamientos, pruebas y otros datos se proponen también.</p>{notice&&<p className="success" role="status">{notice}</p>}{loading&&<p className="v-muted" role="status">Cargando revisión…</p>}{error&&<p className="error" role="alert">{error}</p>}
+      <p className="v-form-note">Se lee el archivo completo. La elección indica dónde guardar el registro principal; las recetas crean tratamientos y medicación sin crear una consulta. alergias, tratamientos, pruebas y otros datos se proponen también.</p>{notice&&<p className="success" role="status">{notice}</p>}{loading&&<p className="v-muted" role="status">Cargando revisión…</p>}{error&&<p className="error" role="alert">{error}</p>}
       {run?.status==='running'&&<p className="v-muted">La lectura está en curso. El estado se actualiza automáticamente.</p>}
       {(run?.status==='failed'||run?.status==='interrupted')&&<p className="v-muted">La lectura falló. El original sigue disponible.</p>}
-      {run?.status==='confirmed'&&<p className="success">Esta extracción ya fue confirmada. <a className="v-text-link" href={`/patients/${patientId}/${run.kind==='examination'?'exams':'consultations'}/${run.examinationId||run.consultationId}`}>Ver registro →</a></p>}
+      {run?.status==='confirmed'&&<p className="success">Esta extracción ya fue confirmada. <a className="v-text-link" href={run.purpose==='prescription'?`/patients/${patientId}/treatments`:`/patients/${patientId}/${run.kind==='examination'?'exams':'consultations'}/${run.examinationId||run.consultationId}`}>Ver registro →</a></p>}
 
       {draft&&run?.status!=='confirmed'&&<><p className="v-note">Revisa y corrige los campos. La fecha y los datos ausentes pueden quedar vacíos.</p>
         <div className="v-note"><strong>Identidad leída del original</strong><p>{run?.originalDraft?.patientName||draft.patientName||'Nombre no detectado'}</p>{(run?.originalDraft?.patientBirthDate||draft.patientBirthDate)&&<p>Nacimiento: {run?.originalDraft?.patientBirthDate||draft.patientBirthDate}</p>}</div>
         {issues.length>0&&<div className="v-warning" role="region" aria-label="Revisión de identidad"><h3>Verifica que este documento pertenece al paciente</h3>{issues.map(issue=><div key={issue.field}><p>{issue.message}</p><p><strong>Documento:</strong> {issue.documentValue} · <strong>Perfil:</strong> {issue.patientValue||'Sin dato comparable'}</p><label className="v-check"><input type="checkbox" checked={acknowledged.includes(issue.field)} onChange={e=>setAcknowledged(current=>e.target.checked?[...current,issue.field]:current.filter(f=>f!==issue.field))}/>He verificado {issue.field==='name'?'el nombre':issue.field==='birthDate'?'la fecha de nacimiento':'el identificador'} y confirmo que pertenece al paciente seleccionado.</label></div>)}</div>}
-        <form noValidate onSubmit={event=>{event.preventDefault();void confirm()}}><div className="v-form">
+        <form noValidate onSubmit={event=>{event.preventDefault();void confirm(event.currentTarget)}}><div className="v-form">
           <label>Nombre del paciente leído (corregible)<input value={draft.patientName||''} maxLength={200} onChange={e=>run?.kind==='examination'?setExaminationField('patientName',e.target.value):setConsultationField('patientName',e.target.value)}/></label>
           <label>Fecha de nacimiento leída<input type="date" value={draft.patientBirthDate||''} onInput={e=>run?.kind==='examination'?setExaminationField('patientBirthDate',e.currentTarget.value):setConsultationField('patientBirthDate',e.currentTarget.value)} onChange={e=>run?.kind==='examination'?setExaminationField('patientBirthDate',e.target.value):setConsultationField('patientBirthDate',e.target.value)}/></label>
           <label>Identificador leído<input value={draft.patientIdentifier||''} maxLength={120} onChange={e=>run?.kind==='examination'?setExaminationField('patientIdentifier',e.target.value):setConsultationField('patientIdentifier',e.target.value)}/></label>
-          {(run?.consultationId||run?.examinationId)&&<p className="v-form-wide v-note">El registro principal ya existe. Esta revisión añade datos complementarios y conserva el texto y las correcciones anteriores.</p>}<fieldset className="v-form-wide v-form" disabled={!!(run?.consultationId||run?.examinationId)}><ClinicalFields fields={run?.kind==='examination'?sharedExaminationFields:sharedConsultationFields} values={draft} onChange={(key,value)=>run?.kind==='examination'?setExaminationField(key as keyof ExaminationDraft,value):setConsultationField(key as keyof ConsultationDraft,value)}/></fieldset>
+          {(run?.consultationId||run?.examinationId)&&<p className="v-form-wide v-note">El registro principal ya existe. Esta revisión añade datos complementarios y conserva el texto y las correcciones anteriores.</p>}{run?.purpose==='prescription'&&<CatalogPicker kind="doctors" name="prescribingDoctorId" label="Médico prescriptor (opcional)"/>}<fieldset className="v-form-wide v-form" disabled={!!(run?.consultationId||run?.examinationId)}><ClinicalFields fields={run?.purpose==='prescription'?sharedConsultationFields.filter(f=>['eventDate','doctorName','centerName'].includes(f.name)):run?.kind==='examination'?sharedExaminationFields:sharedConsultationFields} values={draft} onChange={(key,value)=>run?.kind==='examination'?setExaminationField(key as keyof ExaminationDraft,value):setConsultationField(key as keyof ConsultationDraft,value)}/></fieldset>
         </div>
         {run?.kind==='examination'&&examination&&<ClinicalRecordProposals records={examination.clinicalRecords||[]} onChange={clinicalRecords=>setExamination({...examination,clinicalRecords})}/>}
         {run?.kind==='consultation'&&consultation&&<ClinicalRecordProposals records={consultation.clinicalRecords||[]} onChange={clinicalRecords=>setConsultation({...consultation,clinicalRecords})}/>}
@@ -130,7 +132,7 @@ export function ExtractionReview({patientId,documentId,initialKind,fileName,mime
         <button type="button" className="v-button v-secondary" disabled={busy||run?.status!=='review'} onClick={saveDraft}>Guardar correcciones para después</button><label className="v-check"><input type="checkbox" checked={reviewed} onChange={e=>setReviewed(e.target.checked)}/>He comparado los datos con el original y revisado las correcciones.</label>
         {blockers.length>0&&<div id="review-pending" className="v-validation-help" role="status"><strong>Para guardar falta:</strong><ul>{blockers.map(message=><li key={message}>{message}</li>)}</ul></div>}
         <button className="v-button" type="submit" aria-disabled={blockers.length>0} aria-describedby={blockers.length?'review-pending':undefined}>
-          Guardar {run?.kind==='examination'?'examen revisado':'consulta revisada'}</button></form>
+          Guardar {run?.purpose==='prescription'?'receta revisada':run?.kind==='examination'?'examen revisado':'consulta revisada'}</button></form>
       </>}
     </section></div>;
 }

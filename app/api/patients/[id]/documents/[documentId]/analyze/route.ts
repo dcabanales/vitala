@@ -5,10 +5,10 @@ import {analyzeMedicalDocument,identityMismatch,extractedConsultation,extractedE
 import {z} from 'zod';
 import {identityIssues} from '../../../../../../lib/document-identity';
 type Context={params:Promise<{id:string;documentId:string}>};
-const input=z.object({kind:z.enum(['consultation','examination']),replaceReview:z.boolean().optional()}).strict();
+const input=z.object({kind:z.enum(['consultation','examination']),replaceReview:z.boolean().optional(),purpose:z.enum(['clinical','prescription']).default('clinical')}).strict();
 export async function GET(req:Request,{params}:Context){try{
   const user=await requireUser(req),{id,documentId}=await params;await authorizePatient(user,id,true);
-  const r=await query(`SELECT id,review_version AS "reviewVersion",measurement_type_ids AS "measurementTypeIds",kind,CASE WHEN status='running' AND created_at<now()-interval '3 minutes' THEN 'interrupted' ELSE status END AS status,model,original_draft AS "originalDraft",schema_version AS "schemaVersion",draft,warning,error_code AS "errorCode",
+  const r=await query(`SELECT id,purpose,review_version AS "reviewVersion",measurement_type_ids AS "measurementTypeIds",kind,CASE WHEN status='running' AND created_at<now()-interval '3 minutes' THEN 'interrupted' ELSE status END AS status,model,original_draft AS "originalDraft",schema_version AS "schemaVersion",draft,warning,error_code AS "errorCode",
     input_tokens AS "inputTokens",output_tokens AS "outputTokens",created_at AS "createdAt",finished_at AS "finishedAt",consultation_id AS "consultationId",examination_id AS "examinationId"
     FROM extraction_runs WHERE patient_id=$1 AND document_id=$2 ORDER BY created_at DESC LIMIT 20`,[id,documentId]);
   const patient=(await query<{name:string;birthDate:string|null}>('SELECT name,birth_date AS "birthDate" FROM patients WHERE id=$1',[id])).rows[0];
@@ -17,7 +17,7 @@ export async function GET(req:Request,{params}:Context){try{
 export async function POST(request:Request,{params}:Context){try{
   const user=await requireUser(request),{id,documentId}=await params;await authorizePatient(user,id,true);
   const req=await boundedRequest(request,2048),parsed=input.safeParse(await req.json());if(!parsed.success)throw new Error('VALIDATION');
-  const kind=parsed.data.kind;
+  const kind=parsed.data.kind;if(parsed.data.purpose==='prescription'&&kind!=='consultation')throw Error('VALIDATION');
   if(!process.env.OPENAI_API_KEY)throw new Error('AI_CONFIG');
   const doc=await query<{file_name:string;mime_type:string;object_key:string;patient_name:string}>(`SELECT d.file_name,d.mime_type,d.object_key,p.name AS patient_name
     FROM medical_documents d JOIN patients p ON p.id=d.patient_id WHERE d.patient_id=$1 AND d.id=$2 AND d.status='ready' AND d.archived_at IS NULL`,[id,documentId]);
@@ -28,20 +28,21 @@ export async function POST(request:Request,{params}:Context){try{
     if(!(await client.query('SELECT 1 FROM medical_documents WHERE patient_id=$1 AND id=$2 AND archived_at IS NULL FOR UPDATE',[id,documentId])).rowCount)throw Error('PATIENT');
     await client.query(`UPDATE extraction_runs SET status='interrupted',finished_at=now(),error_code='INTERRUPTED'
       WHERE status='running' AND created_at<now()-interval '3 minutes'`);
-    const previous=(await client.query('SELECT status,consultation_id,examination_id FROM extraction_runs WHERE patient_id=$1 AND document_id=$2 AND kind=$3 ORDER BY created_at DESC LIMIT 1',[id,documentId,kind])).rows[0];
-    if(previous?.status==='running')throw Error('AI_BUSY');
+    const previous=(await client.query('SELECT status,purpose,consultation_id,examination_id FROM extraction_runs WHERE patient_id=$1 AND document_id=$2 AND kind=$3 ORDER BY created_at DESC LIMIT 1',[id,documentId,kind])).rows[0];
+    if((await client.query("SELECT 1 FROM extraction_runs WHERE patient_id=$1 AND document_id=$2 AND status='running'",[id,documentId])).rowCount)throw Error('AI_DOCUMENT_BUSY');
+    if(previous?.status==='confirmed'&&previous.purpose!==parsed.data.purpose)throw Error('CONFLICT');
     if((previous?.status==='confirmed'&&!parsed.data.replaceReview)||(previous?.status==='review'&&!parsed.data.replaceReview))throw Error('CONFLICT');
     const count=await client.query(`SELECT count(*) FILTER(WHERE created_at>now()-interval '24 hours')::int AS daily,
       count(*) FILTER(WHERE status='running')::int AS running FROM extraction_runs`);
     if(count.rows[0].daily>=20)throw new Error('AI_BUDGET');
     if(count.rows[0].running>=2)throw new Error('AI_BUSY');
-    const r=await client.query(`INSERT INTO extraction_runs(patient_id,document_id,kind,status,model,schema_version,created_by,consultation_id,examination_id)
-      VALUES($1,$2,$3,'running',$4,2,$5,$6,$7) RETURNING id`,[id,documentId,kind,model,user.id,previous?.consultation_id||null,previous?.examination_id||null]);
+    const r=await client.query(`INSERT INTO extraction_runs(patient_id,document_id,kind,status,model,schema_version,created_by,consultation_id,examination_id,purpose)
+      VALUES($1,$2,$3,'running',$4,2,$5,$6,$7,$8) RETURNING id`,[id,documentId,kind,model,user.id,previous?.consultation_id||null,previous?.examination_id||null,parsed.data.purpose]);
     return r.rows[0].id as string;
   });
   try{
     const bytes=await getObject(doc.rows[0].object_key).catch(()=>{throw Error('AI_STORAGE')});
-    const result=await analyzeMedicalDocument({key:doc.rows[0].object_key,mime:doc.rows[0].mime_type,name:doc.rows[0].file_name,bytes,model,kind});
+    const result=await analyzeMedicalDocument({key:doc.rows[0].object_key,mime:doc.rows[0].mime_type,name:doc.rows[0].file_name,bytes,model,kind,purpose:parsed.data.purpose});
     const mismatch=identityMismatch(result.draft.patientName,doc.rows[0].patient_name);
     await query(`UPDATE extraction_runs SET status='review',draft=$2,original_draft=$2,warning=$3,input_tokens=$4,output_tokens=$5,finished_at=now() WHERE id=$1`,
       [run,result.draft,mismatch?'El nombre del documento difiere del perfil. Revisa la identidad y confirma explícitamente si pertenece a este paciente.':null,

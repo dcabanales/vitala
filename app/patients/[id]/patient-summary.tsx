@@ -1,3 +1,4 @@
+import {PatientNarrative} from '../../components/patient-narrative';
 import {MeasurementExplorer} from '../../components/measurement-explorer';
 import type {MeasurementRecord} from '../../lib/measurement-series';
 import {SectionTitle,ReadingText,DateMark} from '../../components/reading';
@@ -26,7 +27,7 @@ export async function PatientSummary({patientId,role}:{patientId:string;role:'ad
  const root='/patients/'+patientId,last=consultations.rows[0],active=conditions.rows.filter(c=>c.state==='active');
  const activity=[...consultations.rows.map(c=>({id:c.id,kind:'Consulta',date:c.event_date,title:c.specialty||'Consulta médica',text:c.summary,href:root+'/consultations/'+c.id})),...exams.rows.map(e=>({id:e.id,kind:'Examen',date:e.event_date,title:e.name,text:e.conclusion,href:root+'/exams/'+e.id}))].sort((a,b)=>(b.date||'').localeCompare(a.date||'')).slice(0,3);
  return <>
- <div className="v-health-intro"><div><p className="v-eyebrow">UNA MIRADA A TU SALUD</p><h1>Tu salud,<br/><em>de un vistazo.</em></h1><p>Consulta lo reciente y abre los detalles cuando los necesites.</p><Link className="v-button v-summary-action" href={role==='patient'?root+'/documents?upload=1':root+'/history'}>{role==='patient'?'Subir un documento':'Explorar la historia'} <Icon name="arrow" size={17}/></Link></div>
+ <div className="v-health-intro"><div><p className="v-eyebrow">UNA MIRADA A TU SALUD</p><h1>Tu salud,<br/><em>de un vistazo.</em></h1><PatientNarrative patientId={patientId} admin={role==='admin'}/><Link className="v-button v-summary-action" href={role==='patient'?root+'/documents?upload=1':root+'/history'}>{role==='patient'?'Subir un documento':'Explorar la historia'} <Icon name="arrow" size={17}/></Link></div>
  <aside className="v-history-summary v-intro-history"><SectionTitle icon="clock" title="De tu historia"><Link className="v-text-link" href={root+'/history'}>Historia completa <Icon name="arrow" size={15}/></Link></SectionTitle><div className="v-activity-list">{activity.length?activity.map(a=><Link className="v-activity-row" key={a.id} href={a.href}><DateMark date={a.date}/><div><span className="v-category">{a.kind} · {friendlyDate(a.date)||'Sin fecha'}</span><h3>{a.title}</h3>{a.text&&<p className="v-line-clamp">{a.text}</p>}</div><Icon name="arrow" size={18}/></Link>):<p className="v-empty-inline">Las consultas y los exámenes publicados aparecerán aquí.</p>}</div><Link className="v-text-link" href={root+'/conditions#antecedentes'}>Ver antecedentes <Icon name="arrow" size={16}/></Link></aside></div>
 
  <div className="v-health-grid"><div className="v-health-main">

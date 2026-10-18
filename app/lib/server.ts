@@ -45,6 +45,11 @@ export function failure(e:unknown){
   if(m==='AI_STORAGE')return problem('No se pudo leer el archivo almacenado. El registro se conserva; reintenta o revisa el almacenamiento.',503);
   if(m==='AI_CONFIG')return problem('La lectura con IA aún no está configurada en este entorno.',503);
   if(m==='AI_BUDGET')return problem('Se alcanzó el límite diario de análisis. Inténtalo más tarde.',429);
+  if(m==='AI_DOCUMENT_BUSY')return problem('Este documento ya se está leyendo. Su estado se actualizará automáticamente; no necesitas iniciar otra lectura.',429);
+  if(m==='SUMMARY_BUSY')return problem('Ya se está preparando un resumen. Espera unos minutos y vuelve a intentarlo.',429);
+  if(m==='SUMMARY_EMPTY')return problem('Publica datos clínicos antes de generar el resumen.',400);
+  if(m==='SUMMARY_SIZE')return problem('El expediente supera el tamaño admitido para este resumen. No se ha enviado a la IA.',400);
+  if(m==='PRESCRIPTION_EMPTY')return problem('La receta necesita al menos una propuesta de tratamiento o medicación. Revisa la lectura antes de confirmar.',400);
   if(m==='AI_BUSY')return problem('Ya hay dos lecturas en curso. Inténtalo de nuevo en unos minutos.',429);
   if(m==='AI_RATE')return problem('El proveedor limitó las solicitudes. Inténtalo más tarde.',429);
   if(m==='AI_PROVIDER'||m==='AI_INCOMPLETE'||m==='AI_INVALID')return problem('La lectura no se completó. Conservamos el documento para reintentar.',502);

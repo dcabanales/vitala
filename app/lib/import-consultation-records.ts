@@ -6,7 +6,7 @@ export async function resolveImportedMeasurementType(c:PoolClient,name:string,ki
  const type=(await c.query("INSERT INTO measurement_types(name,category,value_kind) VALUES($1,'other',$2) ON CONFLICT(name) DO UPDATE SET name=EXCLUDED.name RETURNING id,value_kind,active",[fallback,kind])).rows[0];
  if(type.value_kind!==kind||!type.active)throw Error('VALIDATION');return type.id as string;
 }
-export async function importConsultationRecords(c:PoolClient,args:{patientId:string;consultationId:string|null;examinationId?:string;documentId:string;actorId:string;date:string|null;records:ClinicalRecord[]}){
+export async function importConsultationRecords(c:PoolClient,args:{doctorId?:string|null;doctorName?:string|null;patientId:string;consultationId:string|null;examinationId?:string;documentId:string;actorId:string;date:string|null;records:ClinicalRecord[]}){
  const {patientId:p,consultationId:visit,documentId:doc,actorId:actor,date}=args;
  const phaseLabels={administered:'Administrado durante la atención',discharge:'Indicado al alta; vigencia actual no establecida',current:'Uso documentado en la fecha de la consulta',historical:'Antecedente documentado',unknown:'Vigencia no documentada'};
  let imported=0;
@@ -25,7 +25,7 @@ export async function importConsultationRecords(c:PoolClient,args:{patientId:str
   }else if(x.kind==='history'){
    resource=(await c.query("INSERT INTO medical_history_events(patient_id,kind,title,detail,documented_date,document_id,created_by) VALUES($1,'personal',$2,$3,$4,$5,$6) RETURNING id",[p,x.name,note,date,doc,actor])).rows[0].id;
   }else if(x.kind==='treatment'||x.kind==='medication'){
-   const treatment=(await c.query("INSERT INTO treatments(patient_id,consultation_id,name,state,instructions,note,status,created_by) VALUES($1,$2,$3,$4,$5,$6,'published',$7) RETURNING id",[p,visit,x.name,state,x.detail,note,actor])).rows[0].id;
+   const treatment=(await c.query("INSERT INTO treatments(patient_id,consultation_id,name,state,instructions,note,status,created_by,doctor_id,doctor_as_documented) VALUES($1,$2,$3,$4,$5,$6,'published',$7,$8,$9) RETURNING id",[p,visit,x.name,state,x.detail,note,actor,args.doctorId||null,args.doctorName||null])).rows[0].id;
    resource=treatment;
    if(x.kind==='medication'){
     const cat=(await c.query('INSERT INTO medications(name) VALUES($1) ON CONFLICT(name) DO UPDATE SET name=EXCLUDED.name RETURNING id',[x.name])).rows[0].id;

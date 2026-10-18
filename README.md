@@ -90,3 +90,11 @@ La lectura desde Consultas o Exámenes recorre el documento completo. El punto d
 La migración `018_consultation_records.sql` conserva la procedencia y evita repetir propuestas del mismo documento. «Completar datos del documento» permite releer archivos confirmados para añadir información omitida, preservando el registro principal y sus correcciones. No actualiza automáticamente expedientes existentes: las nuevas propuestas deben revisarse y confirmarse.
 
 «Quitar documento» está disponible en la biblioteca y la revisión. Retira el archivo de la biblioteca y permite volver a cargarlo, conservando la fuente de registros clínicos confirmados. Las lecturas atascadas durante más de tres minutos se marcan interrumpidas para permitir la retirada; una lectura reciente sigue protegida.
+
+### Resumen del paciente, recetas y vínculos clínicos
+- La migración 019 añade resúmenes persistidos y el propósito «receta» de las lecturas.
+- Solo el administrador genera resúmenes con IA. Se reutilizan por huella de los datos clínicos publicados; abrir el perfil o el reporte no llama a OpenAI. Cambios clínicos relevantes marcan el resumen como pendiente y muestran una síntesis actual de datos hasta que el administrador lo actualice.
+- El reporte usa el mismo resumen y lo identifica como generado por IA, separado de las conclusiones médicas. El resumen general no está limitado por los filtros del reporte.
+- En Tratamientos, «Subir receta médica» extrae pautas para revisión humana sin crear una consulta ficticia. El prescriptor es opcional; la fuente y la vigencia documentada se conservan.
+- «Corregir examen» permite seleccionar una consulta del mismo paciente. Ambos detalles muestran el vínculo.
+- Los documentos retirados siguen identificados como tales en la historia y en las fuentes clínicas; retirar el archivo no elimina los registros clínicos confirmados.

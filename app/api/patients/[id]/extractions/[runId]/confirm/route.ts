@@ -5,7 +5,7 @@ import {z} from 'zod';
 import {importConsultationRecords,resolveImportedMeasurementType} from '../../../../../../lib/import-consultation-records';
 import {identityIssues} from '../../../../../../lib/document-identity';
 type Context={params:Promise<{id:string;runId:string}>};
-const identityReview={reviewVersion:z.number().int().positive().optional(),identityAcknowledgements:z.array(z.enum(['name','birthDate','identifier'])).default([]),identityReason:z.string().trim().max(1000).optional()};
+const identityReview={prescribingDoctorId:z.string().uuid().nullable().optional(),reviewVersion:z.number().int().positive().optional(),identityAcknowledgements:z.array(z.enum(['name','birthDate','identifier'])).default([]),identityReason:z.string().trim().max(1000).optional()};
 const consultationInput=z.object({draft:extractedConsultation,...identityReview}).strict();
 const examinationInput=z.object({draft:extractedExamination,...identityReview,measurementTypeIds:z.array(z.string().uuid().nullable()).max(150)}).strict();
 
@@ -16,7 +16,7 @@ export async function POST(request:Request,{params}:Context){try{
     const runResult=await client.query(`SELECT r.*,p.name AS patient_name,p.birth_date AS patient_birth_date FROM extraction_runs r JOIN patients p ON p.id=r.patient_id
       WHERE r.id=$1 AND r.patient_id=$2 FOR UPDATE`,[runId,id]);
     const run=runResult.rows[0];if(!run)throw new Error('PATIENT');
-    if(run.status==='confirmed')return {kind:run.kind,id:run.kind==='examination'?run.examination_id:run.consultation_id,alreadyConfirmed:true};
+    if(run.status==='confirmed')return {kind:run.purpose==='prescription'?'prescription':run.kind,id:run.kind==='examination'?run.examination_id:run.consultation_id,alreadyConfirmed:true};
     if(!(await client.query('SELECT 1 FROM medical_documents WHERE patient_id=$1 AND id=$2 AND archived_at IS NULL FOR SHARE',[id,run.document_id])).rowCount)throw Error('PATIENT');
     if(run.status!=='review'||!run.draft||!['consultation','examination'].includes(run.kind))throw new Error('CONFLICT');
     const review=z.object(identityReview).safeParse(body);if(!review.success)throw new Error('VALIDATION');
@@ -30,6 +30,17 @@ export async function POST(request:Request,{params}:Context){try{
 
     if(run.kind==='consultation'){
       const parsed=consultationInput.safeParse(body);if(!parsed.success)throw new Error('VALIDATION');
+      if(run.purpose==='prescription'){
+        const p=parsed.data.draft;
+        if(!p.clinicalRecords?.some(r=>r.kind==='medication'||r.kind==='treatment'))throw Error('PRESCRIPTION_EMPTY');
+        let doctorId=parsed.data.prescribingDoctorId||null;
+        if(doctorId&&!(await client.query('SELECT 1 FROM doctors WHERE id=$1 AND active',[doctorId])).rowCount)throw Error('VALIDATION');
+        if(!doctorId&&p.doctorName){const match=await client.query('SELECT id FROM doctors WHERE lower(name)=lower($1) AND active LIMIT 2',[p.doctorName]);if(match.rowCount===1)doctorId=match.rows[0].id}
+        const imported=await importConsultationRecords(client,{patientId:id,consultationId:null,documentId:run.document_id,actorId:user.id,date:p.eventDate,records:p.clinicalRecords,doctorId,doctorName:p.doctorName});
+        await client.query("UPDATE extraction_runs SET status='confirmed',reviewed_by=$2,draft=$3,finished_at=now() WHERE id=$1",[runId,user.id,p]);
+        await client.query("INSERT INTO audit_events(actor_id,action,resource_type,resource_id,patient_id) VALUES($1,'confirm_prescription','document',$2,$3)",[user.id,run.document_id,id]);
+        return {kind:'prescription',id:run.document_id,alreadyConfirmed:false,imported};
+      }
       const previous=await client.query('SELECT consultation_id FROM consultation_documents WHERE patient_id=$1 AND document_id=$2',[id,run.document_id]);
       if(previous.rowCount&&previous.rows[0].consultation_id!==run.consultation_id)throw new Error('CONFLICT');
       const p=parsed.data.draft;
@@ -92,5 +103,5 @@ export async function POST(request:Request,{params}:Context){try{
       VALUES($1,'confirm_extraction','examination',$2,$3)`,[user.id,examinationId,id]);
     return {kind:'examination',id:examinationId,alreadyConfirmed:false};
   });
-  return Response.json(result.kind==='examination'?{examination:result}:{consultation:result},{headers:noCache});
+  return Response.json(result.kind==='prescription'?{prescription:result}:result.kind==='examination'?{examination:result}:{consultation:result},{headers:noCache});
 }catch(e){return failure(e)}}

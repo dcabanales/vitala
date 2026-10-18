@@ -54,3 +54,7 @@ h1{font-family:var(--serif);font-weight:400!important;letter-spacing:-1.1px!impo
 .v-file-picker input{position:absolute;inset:0;opacity:0;width:100%;height:100%;cursor:pointer}
 .v-validation-help{padding:14px 18px;border-radius:12px;background:#f4f1e5;color:#625435;line-height:1.6;margin:14px 0}
 .v-validation-help ul{padding-left:22px;margin:6px 0 0}.v-button[aria-disabled=true]{opacity:.65;cursor:help}
+.v-patient-narrative{margin:22px 0;padding:20px 22px;background:#fff;border:1px solid var(--line);border-radius:18px;max-width:680px}
+.v-patient-narrative h3{margin:0 0 10px;font-size:17px}.v-patient-narrative p{font-size:15px;line-height:1.75}.v-patient-narrative small{display:block;line-height:1.6;color:#637765}
+.v-summary-controls{display:grid;gap:10px;margin-top:16px}.v-summary-controls .v-button{justify-self:start}
+.v-report-paper .v-patient-narrative{max-width:none;break-inside:avoid}
