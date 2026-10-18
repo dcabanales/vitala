@@ -13,10 +13,12 @@ function validSignature(type:string,bytes:Uint8Array){
 }
 export async function GET(req:Request,{params}:Context){try{
   const user=await requireUser(req),{id}=await params;await authorizePatient(user,id);
-  const r=await query(`SELECT (d.created_by=$3 OR $2='admin') AS "canRemove",d.id,d.file_name AS "fileName",d.mime_type AS "mimeType",d.byte_size AS "byteSize",d.sha256,
+  const archived=new URL(req.url).searchParams.get('archived')==='1';
+  if(archived&&user.role!=='admin')throw Error('ROLE');
+  const r=await query(`SELECT d.archived_at AS "archivedAt",EXISTS(SELECT 1 FROM document_withdrawals w WHERE w.patient_id=d.patient_id AND w.document_id=d.id AND w.restored_at IS NULL) AS "dataWithdrawn",(d.created_by=$3 OR $2='admin') AS "canRemove",d.id,d.file_name AS "fileName",d.mime_type AS "mimeType",d.byte_size AS "byteSize",d.sha256,
     d.status,COALESCE((SELECT CASE WHEN x.status='running' AND x.created_at<now()-interval '3 minutes' THEN 'interrupted' ELSE x.status END FROM extraction_runs x WHERE x.document_id=d.id AND x.patient_id=d.patient_id ORDER BY x.created_at DESC LIMIT 1),'uploaded') AS "processingStatus",d.visible_to_patient AS "visibleToPatient",d.document_date AS "documentDate",d.created_at AS "createdAt",s.name AS "specialtyName"
     FROM medical_documents d LEFT JOIN medical_specialties s ON s.id=d.specialty_id
-    WHERE d.patient_id=$1 AND d.archived_at IS NULL AND ($2='admin' OR (d.visible_to_patient AND (d.status='ready' OR d.created_by=$3))) ORDER BY d.created_at DESC LIMIT 200`,[id,user.role,user.id]);
+    WHERE d.patient_id=$1 AND (d.archived_at IS NOT NULL)=$4 AND ($2='admin' OR (d.visible_to_patient AND (d.status='ready' OR d.created_by=$3))) ORDER BY d.created_at DESC LIMIT 200`,[id,user.role,user.id,archived]);
   return Response.json({documents:r.rows},{headers:noCache});
 }catch(e){return failure(e)}}
 export async function POST(request:Request,{params}:Context){try{
@@ -27,10 +29,11 @@ export async function POST(request:Request,{params}:Context){try{
   if(careTaskId&&!/^[0-9a-f-]{36}$/i.test(careTaskId))throw Error('VALIDATION');
   const bytes=new Uint8Array(await file.arrayBuffer());if(!validSignature(file.type,bytes))throw new Error('VALIDATION');
   const sha256=createHash('sha256').update(bytes).digest('hex');
-  const existing=await query('SELECT id FROM medical_documents WHERE patient_id=$1 AND sha256=$2 AND status=$3 AND archived_at IS NULL',[id,sha256,'ready']);
-  if(existing.rowCount)return Response.json({error:'Este documento ya está registrado para el paciente.',documentId:existing.rows[0].id},{status:409,headers:noCache});
   const docId=randomUUID(),key=`patients/${id}/documents/${docId}`,name=file.name.slice(0,200)||'Documento';
-  await transaction(async client=>{
+  const duplicate=await transaction(async client=>{
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[id+':'+sha256]);
+    const existing=(await client.query("SELECT id,archived_at FROM medical_documents WHERE patient_id=$1 AND sha256=$2 AND status IN ('pending','ready') ORDER BY archived_at NULLS FIRST,created_at LIMIT 1",[id,sha256])).rows[0];
+    if(existing)return existing;
     if(careTaskId){
       const task=(await client.query('SELECT * FROM care_tasks WHERE patient_id=$1 AND id=$2 FOR UPDATE',[id,careTaskId])).rows[0];
       if(!task)throw Error('PATIENT');if(task.status!=='pending')throw Error('TASK_STATE');
@@ -40,7 +43,9 @@ export async function POST(request:Request,{params}:Context){try{
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,[docId,id,name,file.type,bytes.length,sha256,key,user.id,user.role==='patient']);
 
     if(careTaskId)await client.query('UPDATE care_tasks SET document_id=$3,version=version+1,updated_at=now() WHERE patient_id=$1 AND id=$2',[id,careTaskId,docId]);
+    return null;
   });
+  if(duplicate)return Response.json({error:duplicate.archived_at?'Este archivo ya fue retirado. Restáuralo desde Documentos retirados para recuperar sus datos sin duplicarlos.':'Este archivo ya está registrado. Revisa el documento existente para evitar duplicados.',documentId:duplicate.id,archived:!!duplicate.archived_at},{status:409,headers:noCache});
   try{
     await putObject(key,bytes,file.type);
     await transaction(async client=>{

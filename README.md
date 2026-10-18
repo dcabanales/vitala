@@ -111,3 +111,11 @@ En medicación, «¿Para qué sirve?» muestra una explicación general. El admi
 «Más → Asistente de salud» permite preguntas independientes sobre salud y registros publicados del paciente autorizado. No dispone de herramientas de escritura ni acceso a otros pacientes. Las citas se validan contra los datos enviados. Límite: 10 solicitudes por usuario y 50 globales por 24 horas, dos simultáneas; los intentos fallidos también cuentan. Solo se guarda metadata de uso, no preguntas ni respuestas. Usa `OPENAI_MODEL`, `OPENAI_API_KEY` y Responses con `store:false`. La información educativa de IA puede contener errores; no prescribe ni sustituye atención médica.
 
 Migraciones nuevas: 020, 021 y 022; ejecutar `npm run db:migrate` antes de iniciar la nueva versión (Fly lo realiza en release_command).
+
+### Retirada reversible de documentos y datos (migración 023)
+
+La administración puede usar «Retirar documento y datos importados». La vista previa enumera qué se retira y qué se conserva. Solo retira registros cuyo origen exclusivo se puede demostrar y que no fueron editados; preserva datos previos, compartidos y los padres necesarios para acceder a registros conservados. Para importaciones anteriores se comprueba el instante de creación de la transacción y la referencia original; ante dudas se conserva el dato. No elimina catálogos, archivos ni historial de auditoría.
+
+Los datos se marcan `void` y dejan de participar en vistas clínicas, reportes y resumen (la huella de sus datos invalida la caché anterior sin llamar a OpenAI). Los pendientes completados por registros retirados vuelven a pendientes. «Documentos → Ver retirados» permite restaurar el lote; se detiene si hubo cambios posteriores, para no sobrescribirlos. La restauración recupera los registros existentes, no los vuelve a importar.
+
+Los archivos idénticos se reconocen por SHA-256, incluso renombrados o retirados; se ofrece revisar/restaurar el existente. La comprobación se serializa para cargas simultáneas. No se promete equivalencia semántica entre PDFs modificados o fotografías diferentes. Tras una importación confirmada no se permite cambiar su tipo principal para duplicarla como consulta/examen/receta.

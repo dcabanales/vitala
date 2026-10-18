@@ -94,3 +94,11 @@ h1{font-family:var(--serif);font-weight:400!important;letter-spacing:-1.1px!impo
 .v-assistant textarea:focus-visible { outline: 2px solid #658a78; outline-offset: 3px; }
 .v-assistant blockquote { margin: 16px 0; padding: 12px 18px; border-left: 3px solid #658a78; overflow-wrap: anywhere; }
 .v-assistant { overflow-wrap: anywhere; }
+
+.v-withdrawal-preview { margin-top:16px; padding:20px; border:1px solid #dce3d4; border-radius:18px; background:#fafbf7; overflow-wrap:anywhere; }
+.v-withdrawal-preview ul { padding-left:20px; }
+.v-withdrawal-preview li { margin:12px 0; }
+.v-withdrawal-preview small { display:block; color:#61766a; }
+.v-withdrawal-preview .v-form-actions { flex-wrap:wrap; }
+.v-withdrawal-preview button { white-space:normal; }
+.v-doc:has(.v-withdrawal-preview) { grid-column:1/-1; }

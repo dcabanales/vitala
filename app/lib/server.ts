@@ -36,6 +36,10 @@ export function failure(e:unknown){
   if(m==='PASSWORD')return problem('La contraseña debe tener entre 14 y 256 caracteres.',400);
   if(m==='IDENTITY_REVIEW')return problem('Marca cada casilla de verificación de identidad para confirmar que el documento pertenece al paciente.',409);
   if(m==='DOCUMENT_BUSY')return problem('El documento tiene una lectura en curso. Espera a que termine y vuelve a quitarlo.',409);
+  if(m==='DOCUMENT_ALREADY_IMPORTED')return problem('Este documento ya se importó. Revisa su registro existente; cambiar el tipo crearía datos duplicados.',409);
+  if(m==='WITHDRAWAL_CHANGED')return problem('Los datos cambiaron. Cierra la vista previa y vuelve a revisarla antes de retirar.',409);
+  if(m==='RESTORE_CHANGED')return problem('Hay cambios posteriores en los registros o en el pendiente. No se ha restaurado nada para evitar sobrescribirlos.',409);
+  if(m==='WITHDRAWAL_ACTIVE')return problem('Este documento tiene una retirada de datos. Usa Restaurar documento y datos desde Documentos retirados.',409);
   if(m==='CONFLICT')return problem('Los datos han cambiado. Recarga antes de guardar.',409);
   if(m==='AI_AUTH'||m==='AI_ACCESS')return problem('La conexión con la IA necesita revisión de la clave o de sus permisos. El documento se conserva.',503);
   if(m==='AI_MODEL')return problem('El modelo de IA configurado no está disponible. Revisa la configuración; el documento se conserva.',503);

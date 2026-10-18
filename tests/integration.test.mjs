@@ -92,6 +92,8 @@ test('aislamiento A/B, invitación, revocación y vínculos clínicos', {skip:!e
   assert.equal(addedType.status,201);
   assert.equal((await post(patient,'/api/measurement-types',{name:'No autorizado',category:'other',valueKind:'text'})).status,403);
   assert.equal((await post(patient,`/api/patients/${a}/summary`,{})).status,404);
+  assert.equal((await request(patient,`/api/patients/${a}/documents/${randomUUID()}/withdrawal`)).status,404);
+  assert.equal((await post(patient,`/api/patients/${a}/documents/${randomUUID()}/withdrawal`,{action:'withdraw',token:'0'.repeat(64)})).status,404);
   assert.equal((await post(patient,`/api/patients/${a}/pending`,{})).status,404);
   assert.equal((await request(patient,`/api/patients/${a}/pending`)).status,200);
   assert.equal((await request(patient,`/api/patients/${b}/pending`)).status,404);
@@ -376,8 +378,8 @@ test('entrada por rol, perfil propio, upload del paciente, invitación y sesión
  assert.equal((await post(patient,`/api/patients/${id}/documents/${docId}`,{})).status,200);
  assert.equal((await request(patient,`/api/patients/${id}/documents`)).body.documents.length,1);
  assert.equal((await remove(id,docId)).status,200);
- const reuploaded=await upload(id);assert.equal(reuploaded.status,201);assert.notEqual(reuploaded.body.document.id,docId);
- assert.equal((await post(patient,`/api/patients/${id}/documents/${docId}`,{})).status,409);
+ const reuploaded=await upload(id);assert.equal(reuploaded.status,409);assert.equal(reuploaded.body.documentId,docId);assert.equal(reuploaded.body.archived,true);
+ assert.equal((await post(patient,`/api/patients/${id}/documents/${docId}`,{})).status,200);
 
  assert.equal((await post(patient,`/api/patients/${id}/documents/${docId}/analyze`,{kind:'consultation'})).status,404);
  assert.equal((await request(admin,`/reviews?patient=${id}`)).status,200);
@@ -629,4 +631,103 @@ test('asistente limita el consumo antes de llamar al proveedor y valida pregunta
  assert.equal((await post(admin,`/api/patients/${randomUUID()}/assistant`,{question:'Ver datos'})).status,404);
  assert.equal((await request(admin,`/patients/${patient}/assistant`)).status,200);
  }finally{if(ids.length)await pool.query('DELETE FROM assistant_requests WHERE id=ANY($1::uuid[])',[ids]);await pool.end()}
+});
+
+async function withdrawalFixture(admin,pool,{task=false,records}={}){
+ const name='Retirada ficticia '+randomUUID().slice(0,8),patient=(await post(admin,'/api/patients',{name,authorizedBy:'Prueba',basis:'Prueba local'})).body.patient.id;
+ const bytes='%PDF-1.4\n'+randomUUID()+'\n%%EOF';
+ let taskId;if(task)taskId=(await post(admin,`/api/patients/${patient}/pending`,{requestKey:randomUUID(),kind:'consultation',title:'Pendiente a reabrir',scheduledDate:null,scheduledTime:null,doctorId:null,centerId:null,specialtyId:null,notes:null,status:'pending'})).body.task.id;
+ const upload=async(filename='retirada.pdf')=>{const f=new FormData();f.append('file',new File([bytes],filename,{type:'application/pdf'}));if(taskId)f.append('careTaskId',taskId);return request(admin,`/api/patients/${patient}/documents`,{method:'POST',body:f,headers:{origin:'null','x-csrf-token':await token(admin)}})};
+ const doc=(await upload()).body.document.id;
+ const actor=(await pool.query('SELECT id FROM users WHERE email=$1',[email])).rows[0].id;
+ const clinicalRecords=records||['allergy','condition','history','treatment','medication','examination','measurement'].map(kind=>({kind,name:'Dato ficticio '+kind,detail:'Información de prueba',phase:'unknown',certainty:'confirmed',originalValue:kind==='measurement'?'12':null,numericValue:kind==='measurement'?'12':null,unit:null,referenceRange:null,dose:null,frequency:null,route:null,evidence:'Fuente ficticia',page:'1'}));
+ const draft={patientName:name,eventDate:null,doctorName:null,centerName:null,specialtyName:null,reason:'Consulta de prueba',symptoms:null,summary:'Resumen ficticio',findings:null,impression:null,conclusion:null,recommendations:null,followUp:null,evidence:[],clinicalRecords};
+ const run=(await pool.query("INSERT INTO extraction_runs(patient_id,document_id,kind,status,model,schema_version,draft,created_by) VALUES($1,$2,'consultation','review','synthetic',2,$3,$4) RETURNING id",[patient,doc,draft,actor])).rows[0].id;
+ const confirmation=await post(admin,`/api/patients/${patient}/extractions/${run}/confirm`,{draft});assert.equal(confirmation.status,200,JSON.stringify(confirmation.body));
+ return {patient,doc,actor,run,draft,taskId,upload,url:`/api/patients/${patient}/documents/${doc}/withdrawal`};
+}
+
+test('retirada completa reversible: nueve registros, resumen, pendiente y recarga sin duplicados',{skip:!enabled||!localDb},async()=>{
+ const admin=client();await login(admin,email,password);const pool=new pg.Pool({connectionString:process.env.SMOKE_DATABASE_URL,max:1});
+ try{
+ const f=await withdrawalFixture(admin,pool,{task:true}),preview=await request(admin,f.url);
+ assert.equal((await post(admin,`/api/patients/${f.patient}/documents/${f.doc}/analyze`,{kind:'examination',replaceReview:true})).status,409);assert.equal(preview.status,200,JSON.stringify(preview.body));
+ assert.equal(preview.body.items.filter(x=>x.action==='withdraw').length,9,JSON.stringify(preview.body));assert.equal(preview.body.tasks.length,1);
+ const before=(await request(admin,`/patients/${f.patient}/report`)).body;assert.ok(before.includes('Dato ficticio allergy'));
+ const removed=await post(admin,f.url,{action:'withdraw',token:preview.body.token});assert.equal(removed.status,200,JSON.stringify(removed.body));assert.equal(removed.body.withdrawn,9);
+ assert.equal((await post(admin,f.url,{action:'withdraw',token:preview.body.token})).status,409);
+ assert.equal((await request(admin,`/api/patients/${f.patient}/documents`)).body.documents.length,0);
+ const archived=(await request(admin,`/api/patients/${f.patient}/documents?archived=1`)).body.documents;assert.equal(archived[0].dataWithdrawn,true);
+ for(const path of ['', '/report']){const page=await request(admin,`/patients/${f.patient}${path}`);assert.equal(page.status,200);assert.ok(!page.body.includes('Dato ficticio allergy'));assert.ok(!page.body.includes('Dato ficticio condition'))}
+ const task=(await request(admin,`/api/patients/${f.patient}/pending`)).body.tasks[0];assert.equal(task.status,'pending');assert.equal(task.consultationId,null);
+ const duplicate=await f.upload('otro-nombre.pdf');assert.equal(duplicate.status,409);assert.equal(duplicate.body.documentId,f.doc);assert.equal(duplicate.body.archived,true);
+ assert.equal((await post(admin,`/api/patients/${f.patient}/documents/${f.doc}`,{})).status,409);
+ assert.equal((await post(admin,f.url,{action:'restore'})).status,200);
+ assert.equal((await request(admin,`/api/patients/${f.patient}/pending`)).body.tasks[0].status,'completed');
+ assert.equal((await request(admin,`/api/patients/${f.patient}/documents`)).body.documents.length,1);
+ assert.ok((await request(admin,`/patients/${f.patient}/report`)).body.includes('Dato ficticio allergy'));
+ assert.equal((await f.upload()).status,409);
+ const again=(await request(admin,f.url)).body;assert.equal(again.items.filter(x=>x.action==='withdraw').length,9,'Restaurar no debe confundirse con una edición manual');
+ assert.equal((await post(admin,`/api/patients/${f.patient}/extractions/${f.run}/confirm`,{draft:f.draft})).status,200);
+ assert.equal((await pool.query('SELECT count(*)::int n FROM consultations WHERE patient_id=$1',[f.patient])).rows[0].n,1);
+ assert.equal((await pool.query('SELECT count(*)::int n FROM patient_medications WHERE patient_id=$1',[f.patient])).rows[0].n,1);
+ assert.equal((await pool.query('SELECT count(*)::int n FROM medical_documents WHERE patient_id=$1',[f.patient])).rows[0].n,1);
+ }finally{await pool.end()}
+});
+
+test('retirada conserva cambios, fuentes compartidas y registros previos; vista previa obsoleta no escribe',{skip:!enabled||!localDb},async()=>{
+ const admin=client();await login(admin,email,password);const pool=new pg.Pool({connectionString:process.env.SMOKE_DATABASE_URL,max:1});
+ try{
+ const f=await withdrawalFixture(admin,pool),first=(await request(admin,f.url)).body;
+ const history=(await pool.query('SELECT id FROM medical_history_events WHERE patient_id=$1',[f.patient])).rows[0].id;
+ await pool.query('UPDATE medical_history_events SET version=version+1,detail=$2 WHERE id=$1',[history,'Editado por el usuario']);
+ assert.equal((await post(admin,f.url,{action:'withdraw',token:first.token})).status,409);
+ assert.equal((await pool.query('SELECT archived_at FROM medical_documents WHERE id=$1',[f.doc])).rows[0].archived_at,null);
+ const file=new FormData();file.append('file',new File(['%PDF-1.4\nOtra fuente\n%%EOF'],'segunda.pdf',{type:'application/pdf'}));
+ const doc2=(await request(admin,`/api/patients/${f.patient}/documents`,{method:'POST',body:file,headers:{origin:'null','x-csrf-token':await token(admin)}})).body.document.id;
+ const allergy=(await pool.query('SELECT id FROM allergies WHERE patient_id=$1',[f.patient])).rows[0].id;
+ await pool.query("INSERT INTO consultation_import_records(patient_id,document_id,kind,name_key,resource_id,snapshot,created_by) VALUES($1,$2,'allergy','otra fuente',$3,'{}',$4)",[f.patient,doc2,allergy,f.actor]);
+ const prior=(await pool.query("INSERT INTO allergies(patient_id,substance,source_note) VALUES($1,'Dato previo manual','Añadido manualmente') RETURNING id",[f.patient])).rows[0].id;
+ await pool.query("INSERT INTO consultation_import_records(patient_id,document_id,kind,name_key,resource_id,snapshot,created_by) VALUES($1,$2,'allergy','previo',$3,'{}',$4)",[f.patient,f.doc,prior,f.actor]);
+ await pool.query("UPDATE patient_medications SET version=version+1,dose='Dosis editada' WHERE patient_id=$1",[f.patient]);
+ const preview=(await request(admin,f.url)).body;
+ assert.equal(preview.items.find(x=>x.kind==='consultation').action,'keep','Conservar padre de datos editados');
+ assert.equal(preview.items.find(x=>x.id===history).action,'keep');assert.equal(preview.items.find(x=>x.id===allergy).action,'keep');assert.equal(preview.items.find(x=>x.id===prior).action,'keep');
+ assert.equal((await post(admin,f.url,{action:'withdraw',token:preview.token})).status,200);
+ assert.equal((await pool.query('SELECT status FROM allergies WHERE id=$1',[allergy])).rows[0].status,'published');
+ assert.equal((await pool.query('SELECT detail FROM medical_history_events WHERE id=$1',[history])).rows[0].detail,'Editado por el usuario');
+ assert.equal((await post(admin,`/api/patients/${randomUUID()}/documents/${f.doc}/withdrawal`,{action:'restore'})).status,404);
+ }finally{await pool.end()}
+});
+
+test('restauración no sobrescribe cambios posteriores y recargas simultáneas no duplican documentos',{skip:!enabled||!localDb},async()=>{
+ const admin=client();await login(admin,email,password);const pool=new pg.Pool({connectionString:process.env.SMOKE_DATABASE_URL,max:1});
+ try{
+ const f=await withdrawalFixture(admin,pool,{task:true}),preview=(await request(admin,f.url)).body;
+ assert.equal((await post(admin,f.url,{action:'withdraw',token:preview.token})).status,200);
+ await pool.query("UPDATE care_tasks SET notes='Cambio posterior',version=version+1 WHERE id=$1",[f.taskId]);
+ assert.equal((await post(admin,f.url,{action:'restore'})).status,409);
+ assert.equal((await pool.query('SELECT status FROM consultations WHERE patient_id=$1',[f.patient])).rows[0].status,'void');
+ const uploaded=await Promise.all([f.upload('uno.pdf'),f.upload('dos.pdf')]);assert.ok(uploaded.every(r=>r.status===409));
+ assert.equal((await pool.query('SELECT count(*)::int n FROM medical_documents WHERE patient_id=$1',[f.patient])).rows[0].n,1);
+ }finally{await pool.end()}
+});
+
+test('retirada de examen incluye resultados y restauración no crea nuevas mediciones',{skip:!enabled||!localDb},async()=>{
+ const admin=client();await login(admin,email,password);const pool=new pg.Pool({connectionString:process.env.SMOKE_DATABASE_URL,max:1});
+ try{
+ const name='Retirada laboratorio ficticio',patient=(await post(admin,'/api/patients',{name,authorizedBy:'Prueba',basis:'Prueba local'})).body.patient.id;
+ const form=new FormData();form.append('file',new File(['%PDF-1.4\nLaboratorio\n%%EOF'],'lab.pdf',{type:'application/pdf'}));
+ const doc=(await request(admin,`/api/patients/${patient}/documents`,{method:'POST',body:form,headers:{origin:'null','x-csrf-token':await token(admin)}})).body.document.id;
+ const actor=(await pool.query('SELECT id FROM users WHERE email=$1',[email])).rows[0].id;
+ const draft={patientName:name,name:'Laboratorio de prueba',eventDate:null,doctorName:null,centerName:null,specialtyName:null,indication:null,findings:null,conclusion:null,measurements:[{typeName:'Glucosa ficticia',originalValue:'92 mg/dL',numericValue:'92',unit:'mg/dL',referenceRange:'70-100'}],evidence:[]};
+ const run=(await pool.query("INSERT INTO extraction_runs(patient_id,document_id,kind,status,model,schema_version,draft,created_by) VALUES($1,$2,'examination','review','synthetic',2,$3,$4) RETURNING id",[patient,doc,draft,actor])).rows[0].id;
+ assert.equal((await post(admin,`/api/patients/${patient}/extractions/${run}/confirm`,{draft,measurementTypeIds:[null]})).status,200);
+ const url=`/api/patients/${patient}/documents/${doc}/withdrawal`,plan=(await request(admin,url)).body;
+ assert.equal(plan.items.filter(x=>x.action==='withdraw').length,2);
+ assert.equal((await post(admin,url,{action:'withdraw',token:plan.token})).status,200);
+ assert.equal((await pool.query('SELECT status FROM measurements WHERE patient_id=$1',[patient])).rows[0].status,'void');
+ assert.equal((await post(admin,url,{action:'restore'})).status,200);
+ const rows=(await pool.query('SELECT status FROM measurements WHERE patient_id=$1',[patient])).rows;assert.equal(rows.length,1);assert.equal(rows[0].status,'published');
+ }finally{await pool.end()}
 });

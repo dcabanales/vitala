@@ -32,6 +32,8 @@ export async function POST(request:Request,{params}:Context){try{
     if(!(await client.query('SELECT 1 FROM medical_documents WHERE patient_id=$1 AND id=$2 AND archived_at IS NULL FOR UPDATE',[id,documentId])).rowCount)throw Error('PATIENT');
     await client.query(`UPDATE extraction_runs SET status='interrupted',finished_at=now(),error_code='INTERRUPTED'
       WHERE status='running' AND created_at<now()-interval '3 minutes'`);
+    const confirmed=(await client.query("SELECT kind,purpose FROM extraction_runs WHERE patient_id=$1 AND document_id=$2 AND status='confirmed' LIMIT 1",[id,documentId])).rows[0];
+    if(confirmed&&(confirmed.kind!==kind||confirmed.purpose!==parsed.data.purpose))throw Error('DOCUMENT_ALREADY_IMPORTED');
     const previous=(await client.query('SELECT status,purpose,consultation_id,examination_id FROM extraction_runs WHERE patient_id=$1 AND document_id=$2 AND kind=$3 ORDER BY created_at DESC LIMIT 1',[id,documentId,kind])).rows[0];
     if((await client.query("SELECT 1 FROM extraction_runs WHERE patient_id=$1 AND document_id=$2 AND status='running'",[id,documentId])).rowCount)throw Error('AI_DOCUMENT_BUSY');
     if(previous?.status==='confirmed'&&previous.purpose!==parsed.data.purpose)throw Error('CONFLICT');

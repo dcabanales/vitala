@@ -16,11 +16,11 @@ export async function importConsultationRecords(c:PoolClient,args:{doctorId?:str
   const note=[x.detail,phaseLabels[x.phase],`Fuente: ${doc}${x.page?' · pág. '+x.page:''}`,`Cita: ${x.evidence}`].filter(Boolean).join('\n');
   const state=x.phase==='administered'||x.phase==='historical'?'completed':'unknown';let resource:string;
   if(x.kind==='allergy'){
-   const old=(await c.query("SELECT id FROM allergies WHERE patient_id=$1 AND lower(substance)=lower($2) AND status<>'void' LIMIT 1",[p,x.name])).rows[0];
+   const old=(await c.query("SELECT id FROM allergies WHERE patient_id=$1 AND lower(substance)=lower($2) AND status<>'void' LIMIT 1 FOR UPDATE",[p,x.name])).rows[0];
    resource=old?.id||(await c.query("INSERT INTO allergies(patient_id,substance,kind,state,documented_date,source_note) VALUES($1,$2,$3,'unknown',$4,$5) RETURNING id",[p,x.name,/intolerancia/i.test(x.detail||'')?'intolerance':'allergy',date,note])).rows[0].id;
   }else if(x.kind==='condition'){
    const cat=(await c.query('INSERT INTO medical_conditions(name) VALUES($1) ON CONFLICT(name) DO UPDATE SET name=EXCLUDED.name RETURNING id',[x.name])).rows[0].id;
-   const old=(await c.query("SELECT id FROM patient_conditions WHERE patient_id=$1 AND condition_id=$2 AND status<>'void' LIMIT 1",[p,cat])).rows[0];
+   const old=(await c.query("SELECT id FROM patient_conditions WHERE patient_id=$1 AND condition_id=$2 AND status<>'void' LIMIT 1 FOR UPDATE",[p,cat])).rows[0];
    resource=old?.id||(await c.query("INSERT INTO patient_conditions(patient_id,condition_id,consultation_id,state,certainty,documented_date,note,source_note) VALUES($1,$2,$3,'unknown',$4,$5,$6,$7) RETURNING id",[p,cat,visit,x.certainty,date,x.detail,note])).rows[0].id;
   }else if(x.kind==='history'){
    resource=(await c.query("INSERT INTO medical_history_events(patient_id,kind,title,detail,documented_date,document_id,created_by) VALUES($1,'personal',$2,$3,$4,$5,$6) RETURNING id",[p,x.name,note,date,doc,actor])).rows[0].id;
