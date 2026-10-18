@@ -1,0 +1,18 @@
+'use client';
+import Link from 'next/link';
+import {usePathname} from 'next/navigation';
+import {useEffect,useRef,useState} from 'react';
+import {ageYears} from '../../lib/labels';
+import {Icon,type IconName} from '../../components/health-icon';
+const primary:[string,string,IconName][]=[['','Resumen','heart'],['consultations','Consultas','visit'],['exams','Resultados','chart'],['treatments','Tratamientos','care']];
+const secondary:[string,string,IconName][]=[['conditions','Condiciones y alergias','shield'],['history','Historia','clock'],['documents','Documentos','file'],['report','Reporte','book'],['profile','Perfil y acceso','user']];
+export function PatientNavigation({patient}:{patient:{id:string;name:string;birthDate:string|null;bloodGroup:string|null;archivedAt:string|null}}){
+ const path=usePathname(),root='/patients/'+patient.id,section=path.slice(root.length).split('/')[1]||'';
+ const active=[...primary,...secondary].find(([s])=>s===section),extra=secondary.some(([s])=>s===section),[open,setOpen]=useState(false),menu=useRef<HTMLDivElement>(null),trigger=useRef<HTMLButtonElement>(null);
+ useEffect(()=>setOpen(false),[path]);
+ useEffect(()=>{if(!open)return;function outside(e:PointerEvent){if(!menu.current?.contains(e.target as Node))setOpen(false)}function escape(e:KeyboardEvent){if(e.key==='Escape'){setOpen(false);trigger.current?.focus()}}document.addEventListener('pointerdown',outside);document.addEventListener('keydown',escape);return()=>{document.removeEventListener('pointerdown',outside);document.removeEventListener('keydown',escape)}},[open]);
+ const age=ageYears(patient.birthDate);
+ return <div className="v-patient-context"><div className="v-context-top"><Link className="v-context-back" href="/patients">← <span>Pacientes</span></Link><span className="v-context-location">{active?.[1]||'Resumen'}</span><Link className="v-context-report" href={root+'/report'}><Icon name="book" size={16}/><span>Preparar reporte</span></Link></div>
+ <div className="v-patient-heading"><span className="v-avatar" aria-hidden="true">{patient.name.split(' ').filter(Boolean).slice(0,2).map(n=>n[0]).join('')}</span><div><Link href={root} className="v-patient-name">{patient.name}</Link><div className="v-patient-meta"><span>{age===null?'Edad sin registrar':age+' años'}</span><span>Grupo {patient.bloodGroup||'sin registrar'}</span>{patient.archivedAt&&<span>Archivado</span>}</div></div><span className="v-private-profile"><Icon name="shield" size={16}/>Perfil de salud</span></div>
+ <nav className="v-patient-nav" aria-label="Secciones del paciente">{primary.map(([slug,title,icon])=><Link href={root+(slug?'/'+slug:'')} key={slug} aria-current={section===slug?'page':undefined}><Icon name={icon} size={18}/><span>{title}</span></Link>)}<div className="v-more" ref={menu}><button ref={trigger} type="button" aria-expanded={open} aria-controls="patient-more-sections" className={extra?'is-current':''} onClick={()=>setOpen(!open)}><Icon name={extra?active?.[2]||'more':'more'} size={18}/><span>{extra?active?.[1]:'Más'}</span></button>{open&&<div id="patient-more-sections" className="v-more-popover"><p>Explora tu perfil</p>{secondary.map(([slug,title,icon])=><Link key={slug} href={root+'/'+slug} onClick={()=>setOpen(false)} aria-current={section===slug?'page':undefined}><Icon name={icon} size={18}/>{title}</Link>)}</div>}</div></nav></div>;
+}

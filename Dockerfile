@@ -12,13 +12,12 @@ RUN npm run build
 
 FROM node:24-bookworm-slim AS runner
 WORKDIR /app
-ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 HOSTNAME=0.0.0.0 PORT=8080 DATA_DIR=/data
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 HOSTNAME=0.0.0.0 PORT=8080
 COPY --from=builder --chown=node:node /app/.next/standalone ./
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static
 COPY --from=builder --chown=node:node /app/public ./public
-COPY --from=builder --chown=node:node /app/scripts/backup.mjs ./scripts/backup.mjs
-COPY --from=builder --chown=node:node /app/app/lib/storage.ts ./app/lib/storage.ts
-RUN mkdir -p /data && chown node:node /data
+COPY --from=builder --chown=node:node /app/scripts/migrate.mjs ./scripts/migrate.mjs
+COPY --from=builder --chown=node:node /app/migrations ./migrations
 USER node
 EXPOSE 8080
-CMD ["sh", "-c", "umask 077 && node server.js"]
+CMD ["node", "server.js"]

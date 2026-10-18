@@ -1,0 +1,5 @@
+import {friendlyDate} from '../lib/labels';
+import {Icon,type IconName} from './health-icon';
+export function ReadingText({text,limit=280}:{text:string|null|undefined;limit?:number}){if(!text)return null;return text.length>limit?<details className="v-expand-text"><summary><span>{text.slice(0,limit).trimEnd()}…</span><span className="v-expand-label"><span className="v-when-closed">Leer completo</span><span className="v-when-open">Mostrar menos</span></span></summary><p className="v-prose">{text}</p></details>:<p className="v-prose">{text}</p>}
+export function SectionTitle({icon,title,children}:{icon:IconName;title:string;children?:React.ReactNode}){return <div className="v-section-head"><h2 className="v-icon-title"><span className="v-icon-soft"><Icon name={icon}/></span>{title}</h2>{children}</div>}
+export function DateMark({date}:{date:string|null}){const parsed=date?new Date(date.slice(0,10)+'T12:00:00Z'):null;return <span className="v-date-mark" aria-hidden="true"><strong>{parsed&&!Number.isNaN(parsed.getTime())?parsed.getUTCDate():'—'}</strong><span>{parsed&&!Number.isNaN(parsed.getTime())?friendlyDate(date).split(' ')[1]:'Sin fecha'}</span></span>}

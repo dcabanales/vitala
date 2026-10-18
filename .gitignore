@@ -12,3 +12,4 @@ backups/
 *.sqlite-wal
 .fly/
 .DS_Store
+.neon
