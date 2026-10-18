@@ -3,7 +3,7 @@ import {query,transaction} from '../../lib/db';
 import {patientCreate} from '../../lib/schemas';
 export const runtime='nodejs';
 export async function GET(req:Request){try{
-  const user=await requireUser(req),url=new URL(req.url),search=(url.searchParams.get('q')||'').slice(0,100),page=Math.max(1,Math.min(1000,Number(url.searchParams.get('page'))||1)),archived=url.searchParams.get('archived')==='1';
+  const user=await requireUser(req);if(user.role!=='admin')throw new Error('ROLE');const url=new URL(req.url),search=(url.searchParams.get('q')||'').slice(0,100),page=Math.max(1,Math.min(1000,Number(url.searchParams.get('page'))||1)),archived=url.searchParams.get('archived')==='1';
   const r=await query(`SELECT p.id,p.name,p.birth_date AS "birthDate",p.blood_group AS "bloodGroup",p.archived_at AS "archivedAt",p.updated_at AS "updatedAt",p.version
     FROM patients p JOIN patient_access_grants g ON g.patient_id=p.id
     WHERE g.user_id=$1 AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>now())

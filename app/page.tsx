@@ -1,2 +1,5 @@
 import {redirect} from 'next/navigation';
-export default function Home(){redirect('/patients')}
+import {currentUser} from './lib/auth';
+import {landingPath} from './lib/patient-context';
+export const dynamic='force-dynamic';
+export default async function Home(){const user=await currentUser();if(!user)redirect('/login');redirect(await landingPath(user))}

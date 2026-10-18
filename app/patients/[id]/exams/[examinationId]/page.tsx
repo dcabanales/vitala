@@ -10,14 +10,14 @@ import {query} from '../../../../lib/db';
 import {ExaminationEditor} from './examination-editor';
 
 export const dynamic='force-dynamic';
-type Exam={id:string;name:string;event_date:string|null;specialty_name:string|null;doctor_name:string|null;center_name:string|null;
+type Exam={doctor_id:string|null;center_id:string|null;specialty_id:string|null;id:string;name:string;event_date:string|null;specialty_name:string|null;doctor_name:string|null;center_name:string|null;
   indication:string|null;findings:string|null;conclusion:string|null;status:string;version:number};
 type Measure={id:string;type_name:string;original_value:string;unit:string|null;reference_range:string|null};
 type Source={id:string;file_name:string;mime_type:string};
 export default async function ExaminationDetail({params}:{params:Promise<{id:string;examinationId:string}>}){
   const user=await currentUser();if(!user)redirect('/login');
   const {id,examinationId}=await params;try{await authorizePatient(user,id)}catch{notFound()}
-  const exam=await query<Exam>(`SELECT e.id,e.name,e.event_date,e.indication,e.findings,e.conclusion,e.status,e.version,
+  const exam=await query<Exam>(`SELECT e.doctor_id,e.center_id,e.specialty_id,e.id,e.name,e.event_date,e.indication,e.findings,e.conclusion,e.status,e.version,
     COALESCE(e.specialty_as_documented,s.name) AS specialty_name,
     COALESCE(e.doctor_as_documented,d.name) AS doctor_name,
     COALESCE(e.center_as_documented,c.name) AS center_name
@@ -40,5 +40,5 @@ export default async function ExaminationDetail({params}:{params:Promise<{id:str
  <div className="v-reading-layout"><article className="v-reading-article"><section className="v-reading-lead"><span className="v-category">LO QUE DICE EL INFORME</span><h2>Conclusión documentada</h2><ReadingText text={e.conclusion||'El informe no tiene una conclusión registrada.'} limit={650}/></section>{e.findings&&<section className="v-reading-block"><h2>Hallazgos del examen</h2><ReadingText text={e.findings} limit={500}/></section>}{e.indication&&<details className="v-disclosure"><summary>¿Por qué se realizó este examen? <span>＋</span></summary><ReadingText text={e.indication}/></details>}
  {measurements.rows.length>0&&<section className="v-health-section"><h2>Resultados individuales</h2><p className="v-section-description">Valores y referencias tal como constan en la fuente, sin clasificación automática.</p><div className="v-result-grid">{measurements.rows.map(m=><article className="v-result-item" key={m.id}><h3>{m.type_name}</h3><strong>{m.original_value}</strong><p>Unidad: {m.unit||'No registrada'}</p><p className="v-reference">Referencia del informe: {m.reference_range||'No registrada'}</p></article>)}</div><Link className="v-text-link" href={`/patients/${id}/exams#mediciones`}>Explorar la evolución de las mediciones <Icon name="arrow" size={16}/></Link></section>}</article>
  <aside className="v-record-aside">{sources.rows.length>0&&<section><h2>Documentos de este examen</h2>{sources.rows.map(source=><DocumentPreview key={source.id} name={source.file_name} mime={source.mime_type} href={`/api/patients/${id}/documents/${source.id}`}/>)}</section>}<p className="v-reading-note">Cada resultado conserva la unidad y la referencia de su informe. Su interpretación depende del contexto clínico.</p></aside></div>
- {user.role==='admin'&&<div className="v-admin-area"><p className="v-category">GESTIONAR ESTE REGISTRO</p><ExaminationEditor patientId={id} examinationId={examinationId} values={{name:e.name,eventDate:e.event_date,indication:e.indication,findings:e.findings,conclusion:e.conclusion,status:e.status,version:e.version}}/></div>}</main>;
+ {user.role==='admin'&&<div className="v-admin-area"><p className="v-category">GESTIONAR ESTE REGISTRO</p><ExaminationEditor patientId={id} examinationId={examinationId} values={{doctorId:e.doctor_id,centerId:e.center_id,specialtyId:e.specialty_id,name:e.name,eventDate:e.event_date,indication:e.indication,findings:e.findings,conclusion:e.conclusion,status:e.status,version:e.version}}/></div>}</main>;
 }

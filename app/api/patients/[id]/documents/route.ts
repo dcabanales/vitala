@@ -13,23 +13,23 @@ function validSignature(type:string,bytes:Uint8Array){
 }
 export async function GET(req:Request,{params}:Context){try{
   const user=await requireUser(req),{id}=await params;await authorizePatient(user,id);
-  const r=await query(`SELECT d.id,d.file_name AS "fileName",d.mime_type AS "mimeType",d.byte_size AS "byteSize",d.sha256,
-    d.status,d.visible_to_patient AS "visibleToPatient",d.document_date AS "documentDate",d.created_at AS "createdAt",s.name AS "specialtyName"
+  const r=await query(`SELECT (d.created_by=$3 OR $2='admin') AS "canRemove",d.id,d.file_name AS "fileName",d.mime_type AS "mimeType",d.byte_size AS "byteSize",d.sha256,
+    d.status,COALESCE((SELECT CASE WHEN x.status='running' AND x.created_at<now()-interval '3 minutes' THEN 'interrupted' ELSE x.status END FROM extraction_runs x WHERE x.document_id=d.id AND x.patient_id=d.patient_id ORDER BY x.created_at DESC LIMIT 1),'uploaded') AS "processingStatus",d.visible_to_patient AS "visibleToPatient",d.document_date AS "documentDate",d.created_at AS "createdAt",s.name AS "specialtyName"
     FROM medical_documents d LEFT JOIN medical_specialties s ON s.id=d.specialty_id
-    WHERE d.patient_id=$1 AND ($2='admin' OR (d.status='ready' AND d.visible_to_patient)) ORDER BY d.created_at DESC LIMIT 200`,[id,user.role]);
+    WHERE d.patient_id=$1 AND d.archived_at IS NULL AND ($2='admin' OR (d.visible_to_patient AND (d.status='ready' OR d.created_by=$3))) ORDER BY d.created_at DESC LIMIT 200`,[id,user.role,user.id]);
   return Response.json({documents:r.rows},{headers:noCache});
 }catch(e){return failure(e)}}
 export async function POST(request:Request,{params}:Context){try{
-  const user=await requireUser(request),{id}=await params;await authorizePatient(user,id,true);
+  const user=await requireUser(request),{id}=await params;await authorizePatient(user,id,user.role==='admin');
   const req=await boundedRequest(request,11*1024*1024),form=await req.formData(),file=form.get('file');
   if(!(file instanceof File)||!types.includes(file.type)||file.size<1||file.size>10*1024*1024)throw new Error('VALIDATION');
   const bytes=new Uint8Array(await file.arrayBuffer());if(!validSignature(file.type,bytes))throw new Error('VALIDATION');
   const sha256=createHash('sha256').update(bytes).digest('hex');
-  const existing=await query('SELECT id FROM medical_documents WHERE patient_id=$1 AND sha256=$2 AND status=$3',[id,sha256,'ready']);
+  const existing=await query('SELECT id FROM medical_documents WHERE patient_id=$1 AND sha256=$2 AND status=$3 AND archived_at IS NULL',[id,sha256,'ready']);
   if(existing.rowCount)return Response.json({error:'Este documento ya está registrado para el paciente.',documentId:existing.rows[0].id},{status:409,headers:noCache});
   const docId=randomUUID(),key=`patients/${id}/documents/${docId}`,name=file.name.slice(0,200)||'Documento';
-  await query(`INSERT INTO medical_documents(id,patient_id,file_name,mime_type,byte_size,sha256,object_key,created_by)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,[docId,id,name,file.type,bytes.length,sha256,key,user.id]);
+  await query(`INSERT INTO medical_documents(id,patient_id,file_name,mime_type,byte_size,sha256,object_key,created_by,visible_to_patient)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,[docId,id,name,file.type,bytes.length,sha256,key,user.id,user.role==='patient']);
   try{
     await putObject(key,bytes,file.type);
     await transaction(async client=>{

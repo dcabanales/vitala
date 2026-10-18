@@ -2,7 +2,7 @@ import {requireUser,authorizePatient,failure,noCache,boundedRequest} from '../..
 import {query,transaction} from '../../../../lib/db';
 import {z} from 'zod';
 type Context={params:Promise<{id:string}>};
-const revokeInput=z.object({userId:z.string().uuid()});
+const revokeInput=z.object({userId:z.string().uuid(),restore:z.boolean().optional()});
 export async function GET(req:Request,{params}:Context){try{
   const user=await requireUser(req),{id}=await params;await authorizePatient(user,id,true);
   const r=await query(`SELECT g.user_id AS "userId",u.email,g.access_level AS "accessLevel",g.authorized_by AS "authorizedBy",
@@ -15,11 +15,12 @@ export async function PATCH(request:Request,{params}:Context){try{
   const req=await boundedRequest(request,4096),parsed=revokeInput.safeParse(await req.json());if(!parsed.success)throw new Error('VALIDATION');
   if(parsed.data.userId===user.id)throw new Error('ROLE');
   await transaction(async client=>{
-    const r=await client.query(`UPDATE patient_access_grants SET revoked_at=now()
-      WHERE patient_id=$1 AND user_id=$2 AND revoked_at IS NULL RETURNING id`,[id,parsed.data.userId]);
+    const r=await client.query(`UPDATE patient_access_grants SET revoked_at=CASE WHEN $3 THEN NULL ELSE now() END
+      WHERE patient_id=$1 AND user_id=$2 RETURNING id`,[id,parsed.data.userId,!!parsed.data.restore]);
     if(!r.rowCount)throw new Error('PATIENT');
+    if(!parsed.data.restore)await client.query('UPDATE sessions SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL',[parsed.data.userId]);
     await client.query(`INSERT INTO audit_events(actor_id,action,resource_type,resource_id,patient_id)
-      VALUES($1,'revoke','access_grant',$2,$3)`,[user.id,r.rows[0].id,id]);
+      VALUES($1,$4,'access_grant',$2,$3)`,[user.id,r.rows[0].id,id,parsed.data.restore?'restore':'revoke']);
   });
   return Response.json({ok:true},{headers:noCache});
 }catch(e){return failure(e)}}

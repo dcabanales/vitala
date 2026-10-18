@@ -3,7 +3,7 @@ import {query,transaction} from '../../../../../lib/db';
 import {consultationInput} from '../../../../../lib/schemas';
 import {z} from 'zod';
 type Context={params:Promise<{id:string;consultationId:string}>};
-const update=consultationInput.omit({requestKey:true}).partial().extend({version:z.number().int().positive(),changeReason:z.string().trim().min(1).max(500)});
+const update=consultationInput.omit({requestKey:true}).partial().extend({status:z.enum(['draft','published','void']).optional(),version:z.number().int().positive(),changeReason:z.string().trim().min(1).max(500)});
 export async function GET(req:Request,{params}:Context){try{
   const user=await requireUser(req),{id,consultationId}=await params;await authorizePatient(user,id);
   const r=await query(`SELECT c.*,d.name AS doctor_name,m.name AS center_name,s.name AS specialty_name
@@ -17,6 +17,7 @@ export async function PATCH(request:Request,{params}:Context){try{
   const map:Record<string,string>={eventDate:'event_date',doctorId:'doctor_id',centerId:'center_id',specialtyId:'specialty_id',doctorAsDocumented:'doctor_as_documented',centerAsDocumented:'center_as_documented',reason:'reason',symptoms:'symptoms',summary:'summary',findings:'findings',impression:'impression',conclusion:'conclusion',recommendations:'recommendations',followUp:'follow_up',status:'status'};
   const values:unknown[]=[id,consultationId,p.version],sets:string[]=[];
   for(const [key,column] of Object.entries(map)){if(Object.hasOwn(p,key)){values.push((p as Record<string,unknown>)[key]||null);sets.push(`${column}=$${values.length}`)}}
+  if(p.specialtyId)sets.push('specialty_as_documented=NULL');
   if(!sets.length)throw new Error('VALIDATION');
   const row=await transaction(async client=>{
     const before=await client.query('SELECT * FROM consultations WHERE patient_id=$1 AND id=$2 FOR UPDATE',[id,consultationId]);

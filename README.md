@@ -2,15 +2,15 @@
 
 Vitala es una aplicación privada, mobile first, para organizar los expedientes de unos pocos pacientes. Un administrador registra consultas, exámenes, mediciones, condiciones, alergias, tratamientos, medicación y documentos; cada paciente invitado consulta solo los datos publicados de su expediente. Los informes PDF e imágenes pueden proponerse como consultas o exámenes con mediciones mediante OpenAI, siempre con revisión humana antes de incorporarlos. Los reportes se imprimen o guardan como PDF desde el navegador.
 
-Esta versión nueva comienza con una base vacía. **No importa ni modifica la base SQLite, el volumen o las cuentas de la instalación anterior.** El archivo `fly.toml` actual sigue apuntando a esa instalación; `fly.v2.toml` describe la nueva arquitectura y debe usarse explícitamente cuando los servicios nuevos estén preparados.
+Esta versión nueva comienza con una base vacía. **No importa ni modifica la base SQLite, el volumen o las cuentas de la instalación anterior.** `fly.toml` y `fly.v2.toml` describen la arquitectura PostgreSQL/S3 actual e incluyen la ejecución de migraciones pendientes al desplegar.
 
 ## Arquitectura
 
 - Next.js 16, TypeScript y Node.js 24 en Fly.io.
 - PostgreSQL para cuentas, permisos, historia clínica, metadatos y auditoría.
 - Bucket privado compatible con S3 para originales PDF e imágenes; en desarrollo puede usarse un directorio local.
-- Sesiones revocables de ocho horas en cookies `HttpOnly`, `Secure` en HTTPS y `SameSite=Strict`. Los pacientes tienen acceso de solo lectura a su expediente publicado. Cada petición clínica comprueba la concesión vigente.
-- OpenAI Responses API con `store:false`, modelo configurable y confirmación manual. Una clave en Fly ya existe para la instalación anterior, pero la versión nueva solo podrá probar la extracción real después de configurar su base y almacenamiento.
+- Sesiones revocables de ocho horas en cookies `HttpOnly`, `Secure` en HTTPS y `SameSite=Strict`. Los pacientes consultan su expediente publicado y pueden subir sus propios documentos para revisión. Cada petición comprueba tanto la cuenta vinculada al paciente como la concesión vigente. Solo el administrador modifica registros clínicos.
+- OpenAI Responses API con `store:false`, modelo configurable y confirmación manual. Las pruebas locales de extracción con PDF e imagen ficticios pasan con la clave configurada; la instalación de Fly necesita desplegar la versión actual para usar estos flujos.
 
 ## Desarrollo local con datos ficticios
 
@@ -32,7 +32,7 @@ Para validar: `npm run typecheck`, `npm run build` y `npm test`. Las pruebas HTT
 
 Para crear Neon desde cero y separar los datos de los archivos privados, sigue [Preparación de Neon](docs/neon-setup.md).
 
-**Validación del 18 de octubre de 2026:** el proyecto `vitala-v2` ya tiene PostgreSQL y el bucket privado `vitala-documents`. La CLI local usa una clave limitada a ese proyecto; la primera clave creada durante la configuración fue revocada y no debe reutilizarse. Las 12 migraciones, una cuenta administradora ficticia y una prueba de subida, lectura y eliminación de un objeto ficticio funcionaron en la rama `vitala-integration-test`, que caduca el 25 de octubre. La rama `production` de Neon y la app actual de Fly no se han migrado. También pasaron la compilación, los tests de dominio, las cinco pruebas HTTP de integración con PostgreSQL local y la restauración de una copia cifrada con tres objetos ficticios. Dos extracciones reales con OpenAI leyeron PDF inventados: una consulta y un examen con glucosa y hemoglobina. Ambos resultados quedaron pendientes de revisión, sin crear automáticamente registros clínicos. Falta revisar las condiciones de tratamiento de datos antes de cargar expedientes reales.
+**Validación del 18 de octubre de 2026:** el proyecto `vitala-v2` ya tiene PostgreSQL y el bucket privado `vitala-documents`. La CLI local usa una clave limitada a ese proyecto; la primera clave creada durante la configuración fue revocada y no debe reutilizarse. Las 12 migraciones, una cuenta administradora ficticia y una prueba de subida, lectura y eliminación de un objeto ficticio funcionaron en la rama `vitala-integration-test`, que caduca el 25 de octubre. Una comprobación posterior encontró las migraciones 001–012 y un administrador en production; la imagen de Fly seguía siendo v1. Las migraciones 013–016 están pendientes en producción. También pasaron la compilación, los tests de dominio, las cinco pruebas HTTP de integración con PostgreSQL local y la restauración de una copia cifrada con tres objetos ficticios. Dos extracciones reales con OpenAI leyeron PDF inventados: una consulta y un examen con glucosa y hemoglobina. Ambos resultados quedaron pendientes de revisión, sin crear automáticamente registros clínicos. Falta revisar las condiciones de tratamiento de datos antes de cargar expedientes reales.
 
 1. Crea una **base PostgreSQL nueva y vacía** y un **bucket privado nuevo**. No reutilices el volumen `/data` anterior. La app y los recursos deben estar en regiones compatibles. Comprueba el acceso desde tu cuenta antes de cargar datos reales.
 2. Configura en Fly los secretos `DATABASE_URL`, `SESSION_SECRET`, `APP_ORIGIN=https://vitala.fly.dev`, `OBJECT_BUCKET`, `AWS_ENDPOINT_URL_S3`, `AWS_REGION`, `AWS_ACCESS_KEY_ID` y `AWS_SECRET_ACCESS_KEY`. Conserva `OPENAI_API_KEY` como secreto; `OPENAI_MODEL` tiene por defecto `gpt-6-luna` en `fly.v2.toml`. No introduzcas secretos en el repositorio ni en argumentos de terminal que queden en el historial.
@@ -47,7 +47,7 @@ El `fly.toml.example` también refleja la configuración v2. Para volver al cód
 
 ## Cuentas y recuperación
 
-Desde la ficha de un paciente con cuenta, el administrador puede generar un enlace de recuperación válido 30 minutos. Debe confirmar su propia contraseña para crearlo y entregarlo al paciente por un canal privado. El enlace solo se usa una vez; al cambiar la contraseña se revocan las sesiones anteriores. No se envía correo desde Vitala.
+Desde la ficha de un paciente con cuenta, el administrador puede generar un enlace de recuperación válido 30 minutos. Debe confirmar su propia contraseña para crearlo y entregarlo al paciente por un canal privado. El enlace solo se usa una vez; al cambiar la contraseña se revocan las sesiones anteriores. La recuperación genera un enlace para compartir manualmente.
 
 Para recuperar la cuenta administradora cuando se pierde la contraseña, `npm run admin:reset-password` funciona desde un entorno con acceso directo a PostgreSQL y requiere `DATABASE_URL`, `ADMIN_RESET_EMAIL` y `ADMIN_RESET_PASSWORD`. Introduce la nueva contraseña mediante tu gestor de secretos o una variable leída en silencio por la terminal, y retírala del entorno después. Esta operación revoca las sesiones y conserva MFA. Si también se perdieron el autenticador y todos los códigos de recuperación, ejecuta la misma operación con `ADMIN_RESET_MFA=1`; quedará auditada y debes activar MFA de nuevo antes de usar expedientes reales.
 
@@ -65,4 +65,14 @@ El resumen visible se deriva de registros estructurados. En el reporte de cada p
 
 ## Límites actuales
 
-Las invitaciones y recuperaciones generan enlaces privados que el administrador entrega por un canal seguro; no hay envío de correo ni recuperación autoservicio. La IA propone consultas y exámenes con mediciones para revisión humana. El bucket privado y ambos tipos de extracción con OpenAI ya pasaron pruebas de extremo a extremo con datos ficticios. El plan actual de Neon no permite activar su opción de soporte HIPAA. Antes de cargar expedientes reales, revisa las condiciones de tratamiento de datos de salud, ubicación, acuerdos y controles aplicables a todos los proveedores.
+Sin proveedor configurado, las invitaciones y recuperaciones generan enlaces privados para compartir. El envío opcional de invitaciones usa RESEND_API_KEY e INVITATION_FROM; no está activado ni se ha probado la entrega de correos. No hay recuperación autoservicio. La IA propone consultas y exámenes con mediciones para revisión humana. El bucket privado y ambos tipos de extracción con OpenAI ya pasaron pruebas de extremo a extremo con datos ficticios. El plan actual de Neon no permite activar su opción de soporte HIPAA. Antes de cargar expedientes reales, revisa las condiciones de tratamiento de datos de salud, ubicación, acuerdos y controles aplicables a todos los proveedores.
+
+## Acceso por rol y revisión de documentos
+
+El administrador entra en Pacientes; el paciente entra directamente en su resumen y conserva ese contexto al recargar. Una cuenta sin perfil o sin permiso vigente ve una explicación y la opción de cerrar sesión. La navegación personal agrupa medicamentos, antecedentes, documentos y reportes bajo Más.
+
+En Perfil → Acceso se crean, renuevan y revocan invitaciones; se ve si la cuenta ya se activó. El paciente elige su contraseña. Sin proveedor, se muestra el enlace y nunca se afirma haber enviado correo. Revocar el acceso invalida las sesiones; restaurarlo conserva la cuenta.
+
+Revisar documentos reúne las cargas y permite filtrar por paciente, fecha, tipo y estado. Los borradores de IA se pueden corregir, guardar y retomar; se conserva la extracción original. La confirmación es idempotente y comprueba versiones para impedir que una revisión antigua sobrescriba otra. Los errores de proveedor, cuota, archivo y tiempo de espera son explícitos.
+
+Las correcciones y archivos clínicos requieren motivo y conservan la versión anterior. Los catálogos se desactivan sin romper sus referencias. Doctor, centro, especialidad y medicamento pueden crearse desde el formulario clínico sin perder su contenido.

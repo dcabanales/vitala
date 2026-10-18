@@ -51,7 +51,7 @@ export async function analyzeMedicalDocument(args:{key:string;mime:string;name:s
       input:[{role:'user',content:[content,{type:'input_text',text:args.kind==='examination'?'Extrae un examen documentado y sus mediciones para revisión humana.':'Extrae una consulta documentada para revisión humana.'}]}],
       text:{format:{type:'json_schema',name:args.kind==='examination'?'vitala_examination_v1':'vitala_consultation_v1',strict:true,
         schema:args.kind==='examination'?examinationJsonSchema:consultationJsonSchema}},max_output_tokens:5000}),signal:AbortSignal.timeout(90_000)});
-  if(!response.ok)throw new Error(response.status===429?'AI_RATE':'AI_PROVIDER');
+  if(!response.ok){const error=await response.json().catch(()=>({}));const code=error?.error?.code;throw new Error(response.status===401?'AI_AUTH':response.status===403?'AI_ACCESS':response.status===404?'AI_MODEL':response.status===429?(code==='insufficient_quota'?'AI_QUOTA':'AI_RATE'):response.status===400?'AI_REQUEST':'AI_PROVIDER')}
   const result=await response.json();if(result.status!=='completed')throw new Error('AI_INCOMPLETE');
   const raw=(result.output||[]).flatMap((item:{content?:Array<{type:string;text?:string}>})=>item.content||[])
     .filter((item:{type:string})=>item.type==='output_text').map((item:{text?:string})=>item.text||'').join('');

@@ -8,10 +8,10 @@ export async function POST(request:Request){try{
   if(!/^[A-Za-z0-9_-]{43}$/.test(token))throw new Error('VALIDATION');
   const hash=await passwordHash(password);
   await transaction(async client=>{
-    const found=await client.query(`SELECT * FROM invitations WHERE token_hash=$1 AND used_at IS NULL AND expires_at>now() FOR UPDATE`,[tokenHash(token)]);
+    const found=await client.query(`SELECT * FROM invitations WHERE token_hash=$1 AND used_at IS NULL AND revoked_at IS NULL AND expires_at>now() FOR UPDATE`,[tokenHash(token)]);
     const invite=found.rows[0];if(!invite)throw new Error('VALIDATION');
-    const patient=await client.query('SELECT patient_user_id FROM patients WHERE id=$1 FOR UPDATE',[invite.patient_id]);
-    if(!patient.rowCount||patient.rows[0].patient_user_id)throw new Error('CONFLICT');
+    const patient=await client.query('SELECT patient_user_id,archived_at FROM patients WHERE id=$1 FOR UPDATE',[invite.patient_id]);
+    if(!patient.rowCount||patient.rows[0].archived_at||patient.rows[0].patient_user_id)throw new Error('CONFLICT');
     const account=await client.query(`INSERT INTO users(email,password_hash,role) VALUES($1,$2,'patient') RETURNING id`,[invite.email,hash]);
     const userId=account.rows[0].id;
     await client.query('UPDATE patients SET patient_user_id=$2,updated_at=now() WHERE id=$1',[invite.patient_id,userId]);

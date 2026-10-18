@@ -13,11 +13,15 @@ export async function POST(request:Request){try{const user=await requireUser(req
     return r.rows[0];
   });return Response.json({type:item},{status:201,headers:noCache})}catch(e){return failure(e)}}
 export async function PATCH(request:Request){try{const user=await requireUser(request);if(user.role!=='admin')throw new Error('ROLE');
-  const req=await boundedRequest(request,4096),p=z.object({id:z.string().uuid(),active:z.boolean()}).strict().safeParse(await req.json());
+  const req=await boundedRequest(request,4096),p=input.partial().extend({id:z.string().uuid(),active:z.boolean().optional()}).strict().safeParse(await req.json());
   if(!p.success)throw new Error('VALIDATION');
   const item=await transaction(async client=>{
-    const r=await client.query('UPDATE measurement_types SET active=$2 WHERE id=$1 RETURNING id,active',[p.data.id,p.data.active]);
-    if(!r.rowCount)throw new Error('VALIDATION');
+    const before=await client.query('SELECT * FROM measurement_types WHERE id=$1 FOR UPDATE',[p.data.id]);if(!before.rowCount)throw new Error('PATIENT');
+    if(p.data.valueKind&&p.data.valueKind!==before.rows[0].value_kind&&(await client.query('SELECT 1 FROM measurements WHERE type_id=$1 LIMIT 1',[p.data.id])).rowCount)throw new Error('CONFLICT');
+    const values:unknown[]=[p.data.id],sets:string[]=[];
+    for(const [key,column] of Object.entries({name:'name',category:'category',valueKind:'value_kind',defaultUnit:'default_unit',active:'active'})){if(Object.hasOwn(p.data,key)){values.push((p.data as Record<string,unknown>)[key]);sets.push(`${column}=$${values.length}`)}}
+    if(!sets.length)throw new Error('VALIDATION');
+    const r=await client.query(`UPDATE measurement_types SET ${sets.join(',')} WHERE id=$1 RETURNING id,active`,values);
     await client.query(`INSERT INTO audit_events(actor_id,action,resource_type,resource_id) VALUES($1,'update','measurement_type',$2)`,[user.id,p.data.id]);
     return r.rows[0];
   });return Response.json({type:item},{headers:noCache})}catch(e){return failure(e)}}

@@ -11,13 +11,13 @@ export function AccessGrants({patientId,currentUserId}:{patientId:string;current
   }
   useEffect(()=>{load().catch(e=>setError(e.message))},[patientId]);
   async function revoke(grant:Grant){
-    if(!window.confirm(`¿Revocar el acceso de ${grant.email} a este expediente?`))return;
+    if(!window.confirm(`¿${grant.revokedAt?'Restaurar':'Revocar'} el acceso de ${grant.email} a este expediente?`))return;
     setBusy(true);setError('');
     try{
       const csrf=await fetch('/api/auth/csrf',{cache:'no-store'}).then(r=>r.json());
       const response=await fetch(`/api/patients/${patientId}/grants`,{
         method:'PATCH',headers:{'Content-Type':'application/json','x-csrf-token':csrf.token},
-        body:JSON.stringify({userId:grant.userId})
+        body:JSON.stringify({userId:grant.userId,restore:!!grant.revokedAt})
       });
       if(!response.ok)throw new Error((await response.json()).error||'No se pudo revocar el acceso.');
       await load();
@@ -25,10 +25,10 @@ export function AccessGrants({patientId,currentUserId}:{patientId:string;current
   }
   return <section className="v-panel"><h2>Personas con acceso</h2><p className="v-muted">Los accesos revocados dejan de permitir consultar el expediente de inmediato.</p>
     {error&&<p className="error" role="alert">{error}</p>}
-    <div className="v-stack">{grants.filter(g=>!g.revokedAt).map(g=><div className="v-note" key={g.userId}>
-      <strong>{g.email}</strong><p>{g.accessLevel==='write'?'Administración: lectura y edición':'Paciente: solo lectura'}</p>
+    <div className="v-stack">{grants.map(g=><div className="v-note" key={g.userId}>
+      <strong>{g.email}</strong><p>{g.accessLevel==='write'?'Administración: lectura y edición':'Paciente: lectura y carga de documentos'}</p>
       <p>Autorizado por {g.authorizedBy}. Motivo: {g.basis}</p>
-      {g.userId!==currentUserId&&<button type="button" className="v-link-button" disabled={busy} onClick={()=>revoke(g)}>Revocar acceso</button>}
+      {g.userId!==currentUserId&&<button type="button" className="v-link-button" disabled={busy} onClick={()=>revoke(g)}>{g.revokedAt?'Restaurar acceso':'Revocar acceso'}</button>}
     </div>)}{grants.length===0&&<p className="v-muted">No hay accesos para mostrar.</p>}</div>
   </section>;
 }

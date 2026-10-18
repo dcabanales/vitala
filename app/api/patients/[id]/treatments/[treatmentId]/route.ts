@@ -3,7 +3,7 @@ import {transaction} from '../../../../../lib/db';
 import {treatmentBase} from '../../../../../lib/schemas';
 import {z} from 'zod';
 type Context={params:Promise<{id:string;treatmentId:string}>};
-const update=treatmentBase.omit({requestKey:true}).partial().extend({version:z.number().int().positive(),changeReason:z.string().trim().min(1).max(500)});
+const update=treatmentBase.omit({requestKey:true}).partial().extend({status:z.enum(['draft','published','void']).optional(),version:z.number().int().positive(),changeReason:z.string().trim().min(1).max(500)});
 export async function PATCH(request:Request,{params}:Context){try{
   const user=await requireUser(request),{id,treatmentId}=await params;await authorizePatient(user,id,true);
   const req=await boundedRequest(request,25_000),parsed=update.safeParse(await req.json());if(!parsed.success)throw new Error('VALIDATION');const p=parsed.data;

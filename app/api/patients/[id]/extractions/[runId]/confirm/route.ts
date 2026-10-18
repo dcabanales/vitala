@@ -4,7 +4,7 @@ import {extractedConsultation,extractedExamination} from '../../../../../../lib/
 import {z} from 'zod';
 import {identityIssues} from '../../../../../../lib/document-identity';
 type Context={params:Promise<{id:string;runId:string}>};
-const identityReview={identityAcknowledgements:z.array(z.enum(['name','birthDate','identifier'])).default([]),identityReason:z.string().trim().max(1000).optional()};
+const identityReview={reviewVersion:z.number().int().positive().optional(),identityAcknowledgements:z.array(z.enum(['name','birthDate','identifier'])).default([]),identityReason:z.string().trim().max(1000).optional()};
 const consultationInput=z.object({draft:extractedConsultation,...identityReview}).strict();
 const examinationInput=z.object({draft:extractedExamination,...identityReview,measurementTypeIds:z.array(z.string().uuid().nullable()).max(30)}).strict();
 
@@ -16,8 +16,10 @@ export async function POST(request:Request,{params}:Context){try{
       WHERE r.id=$1 AND r.patient_id=$2 FOR UPDATE`,[runId,id]);
     const run=runResult.rows[0];if(!run)throw new Error('PATIENT');
     if(run.status==='confirmed')return {kind:run.kind,id:run.kind==='examination'?run.examination_id:run.consultation_id,alreadyConfirmed:true};
+    if(!(await client.query('SELECT 1 FROM medical_documents WHERE patient_id=$1 AND id=$2 AND archived_at IS NULL FOR SHARE',[id,run.document_id])).rowCount)throw Error('PATIENT');
     if(run.status!=='review'||!run.draft||!['consultation','examination'].includes(run.kind))throw new Error('CONFLICT');
     const review=z.object(identityReview).safeParse(body);if(!review.success)throw new Error('VALIDATION');
+    if(review.data.reviewVersion&&review.data.reviewVersion!==run.review_version)throw Error('CONFLICT');
     const issues=identityIssues(run.original_draft||run.draft,{name:run.patient_name,birthDate:run.patient_birth_date});
     if(issues.length&&(issues.some(issue=>!review.data.identityAcknowledgements.includes(issue.field))||!review.data.identityReason||review.data.identityReason.length<10))throw new Error('IDENTITY_REVIEW');
     if(issues.length){

@@ -11,6 +11,7 @@ export async function authorizePatient(user:User,patientId:string,write=false){
   if(!/^[0-9a-f-]{36}$/i.test(patientId))throw new Error('PATIENT');
   const r=await query(`SELECT p.id FROM patients p JOIN patient_access_grants g ON g.patient_id=p.id
     WHERE p.id=$1 AND g.user_id=$2 AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>now())
+    AND ($4='admin' OR (p.patient_user_id=$2 AND p.archived_at IS NULL))
     AND ($3=false OR (g.access_level='write' AND $4='admin'))`,[patientId,user.id,write,user.role]);
   if(!r.rowCount){
     await query(`INSERT INTO audit_events(actor_id,action,resource_type,resource_id,success)
@@ -25,6 +26,7 @@ export function failure(e:unknown){
   const code=typeof e==='object'&&e!==null&&'code' in e?String(e.code):'';
   if(code==='23505')return problem('Ya existe un registro con esos datos.',409);
   if(['23502','23503','23514','22P02'].includes(code))return problem('Los datos o vínculos no son válidos.',400);
+  if(m==='DUPLICATE')return problem('Ya existe un registro con ese nombre. Selecciónalo en el catálogo.',409);
   if(m==='AUTH')return problem('Inicia sesión para acceder.',401);
   if(m==='ORIGIN')return problem('Solicitud no permitida.',403);
   if(m==='PATIENT')return problem('Paciente no encontrado o sin acceso.',404);
@@ -34,6 +36,12 @@ export function failure(e:unknown){
   if(m==='PASSWORD')return problem('La contraseña debe tener entre 14 y 256 caracteres.',400);
   if(m==='IDENTITY_REVIEW')return problem('Revisa cada diferencia de identidad y explica por qué el documento pertenece al paciente.',409);
   if(m==='CONFLICT')return problem('Los datos han cambiado. Recarga antes de guardar.',409);
+  if(m==='AI_AUTH'||m==='AI_ACCESS')return problem('La conexión con la IA necesita revisión de la clave o de sus permisos. El documento se conserva.',503);
+  if(m==='AI_MODEL')return problem('El modelo de IA configurado no está disponible. Revisa la configuración; el documento se conserva.',503);
+  if(m==='AI_QUOTA')return problem('La cuenta de IA no tiene cuota disponible. Revisa su facturación antes de reintentar.',503);
+  if(m==='AI_REQUEST')return problem('La IA no pudo aceptar el documento o su configuración. El original se conserva para revisarlo y reintentar.',502);
+  if(m==='AI_TIMEOUT')return problem('La lectura tardó demasiado. Conservamos el original; puedes reintentar.',504);
+  if(m==='AI_STORAGE')return problem('No se pudo leer el archivo almacenado. El registro se conserva; reintenta o revisa el almacenamiento.',503);
   if(m==='AI_CONFIG')return problem('La lectura con IA aún no está configurada en este entorno.',503);
   if(m==='AI_BUDGET')return problem('Se alcanzó el límite diario de análisis. Inténtalo más tarde.',429);
   if(m==='AI_BUSY')return problem('Ya hay dos lecturas en curso. Inténtalo de nuevo en unos minutos.',429);

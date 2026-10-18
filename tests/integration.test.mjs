@@ -22,7 +22,7 @@ async function request(actor,path,options={}){
 async function login(actor,loginEmail,loginPassword){
   const html=(await request(actor,'/login')).body,csrf=html.match(/name="csrfToken" value="([^"]+)"/)?.[1];assert.ok(csrf);
   const form=new URLSearchParams({email:loginEmail,password:loginPassword,csrfToken:csrf});
-  const r=await request(actor,'/api/auth/login',{method:'POST',body:form,headers:{origin:'null'}});assert.equal(r.status,303);assert.ok(actor.cookie);
+  const r=await request(actor,'/api/auth/login',{method:'POST',body:form,headers:{origin:'null'}});assert.equal(r.status,303);assert.ok(actor.cookie);return r;
 }
 async function token(actor){return (await request(actor,'/api/auth/csrf')).body.token}
 async function post(actor,path,data){return request(actor,path,{method:'POST',body:JSON.stringify(data),headers:{'content-type':'application/json',origin:'null','x-csrf-token':await token(actor)}})}
@@ -101,7 +101,7 @@ test('aislamiento A/B, invitación, revocación y vínculos clínicos', {skip:!e
   const patientGrant=grants.find(g=>g.email===`patient-${suffix}@example.test`);assert.ok(patientGrant);
   const revoked=await request(admin,`/api/patients/${a}/grants`,{method:'PATCH',headers:{'content-type':'application/json',origin:'null','x-csrf-token':await token(admin)},body:JSON.stringify({userId:patientGrant.userId})});
   assert.equal(revoked.status,200);
-  assert.equal((await request(patient,`/api/patients/${a}`)).status,404);
+  assert.equal((await request(patient,`/api/patients/${a}`)).status,401);
 });
 
 test('revisión de IA: identidad distinta bloqueada y confirmación idempotente', {skip:!enabled||!localDb}, async()=>{
@@ -313,5 +313,88 @@ test('IA: corregir datos, confirmar cada discrepancia y conservar original y aud
   const stored=(await pool.query('SELECT summary,conclusion FROM consultations WHERE id=$1',[saved.body.consultation.id])).rows[0];assert.deepEqual(stored,{summary:corrected.summary,conclusion:corrected.conclusion});
   assert.equal((await pool.query('SELECT document_id FROM consultation_documents WHERE consultation_id=$1',[saved.body.consultation.id])).rows[0].document_id,documentId);
   const audit=await pool.query("SELECT 1 FROM audit_events WHERE resource_id=$1 AND action='confirm_document_identity'",[runId]);assert.equal(audit.rowCount,1);
+ }finally{await pool.end()}
+});
+
+test('entrada por rol, perfil propio, upload del paciente, invitación y sesión revocada', {skip:!enabled||!localDb}, async()=>{
+ const admin=client(),adminLogin=await login(admin,email,password);assert.equal(new URL(adminLogin.headers.get('location')).pathname,'/patients');
+ const suffix=randomUUID().slice(0,8),patientEmail=`portal-${suffix}@example.test`,patientPassword='Synthetic-portal-password-2026';
+ const created=await post(admin,'/api/patients',{name:'Paciente portal '+suffix,authorizedBy:'Prueba',basis:'Datos ficticios'}),id=created.body.patient.id;
+ const other=(await post(admin,'/api/patients',{name:'Otro portal '+suffix,authorizedBy:'Prueba',basis:'Datos ficticios'})).body.patient.id;
+ const first=await post(admin,`/api/patients/${id}/invitations`,{email:patientEmail});assert.equal(first.body.delivery,'manual');
+ const second=await post(admin,`/api/patients/${id}/invitations`,{email:patientEmail});
+ const activate=async url=>{const actor=client(),tokenValue=url.split('/').at(-1),html=(await request(actor,'/invite/'+tokenValue)).body,csrf=html.match(/name="csrfToken" value="([^"]+)"/)?.[1];return request(actor,'/api/auth/accept-invite',{method:'POST',body:new URLSearchParams({token:tokenValue,password:patientPassword,csrfToken:csrf}),headers:{origin:'null'}})};
+ assert.equal((await activate(first.body.invitationUrl)).status,400);assert.equal((await activate(second.body.invitationUrl)).status,303);
+ assert.ok((await request(admin,`/api/patients/${id}/invitations`)).body.account);
+ const patient=client(),signed=await login(patient,patientEmail,patientPassword);assert.equal(new URL(signed.headers.get('location')).pathname,`/patients/${id}`);
+ assert.equal((await request(patient,'/api/patients')).status,403);
+ assert.equal((await request(patient,'/patients')).headers.get('location'),`/patients/${id}`);
+ for(let i=0;i<2;i++){const home=await request(patient,`/patients/${id}`);assert.equal(home.status,200);assert.ok(!home.body.includes('Directorio médico'));assert.ok(!home.body.includes('href="/patients"'));assert.ok(home.body.includes('Mi salud'));}
+ const pool=new pg.Pool({connectionString:process.env.SMOKE_DATABASE_URL,max:1});let userId;
+ try{userId=(await pool.query('SELECT id FROM users WHERE email=$1',[patientEmail])).rows[0].id;
+ await pool.query("INSERT INTO patient_access_grants(patient_id,user_id,access_level,authorized_by,basis,created_by) SELECT $1,$2,'read','Prueba','Concesión errónea simulada',id FROM users WHERE email=$3",[other,userId,email]);
+ }finally{await pool.end()}
+ assert.equal((await request(patient,`/api/patients/${other}`)).status,404);assert.equal((await request(patient,`/patients/${other}`)).status,404);
+ const upload=async target=>{const form=new FormData();form.append('file',new File([`%PDF-1.4\n% ${suffix}\n%%EOF`],'informe-paciente.pdf',{type:'application/pdf'}));return request(patient,`/api/patients/${target}/documents`,{method:'POST',body:form,headers:{origin:'null','x-csrf-token':await token(patient)}})};
+ assert.equal((await upload(other)).status,404);const document=await upload(id);assert.equal(document.status,201);const docId=document.body.document.id;
+ assert.equal((await upload(id)).status,409);assert.equal((await request(patient,`/api/patients/${id}/documents/${docId}`)).status,200);
+ assert.equal((await request(patient,`/api/patients/${id}/documents`)).body.documents[0].processingStatus,'uploaded');
+ const remove=async(target,doc)=>request(patient,`/api/patients/${target}/documents/${doc}`,{method:'DELETE',headers:{origin:'null','x-csrf-token':await token(patient)}});
+ assert.equal((await remove(other,docId)).status,404);
+ assert.equal((await remove(id,docId)).status,200);
+ assert.equal((await request(patient,`/api/patients/${id}/documents`)).body.documents.length,0);
+ assert.equal((await post(patient,`/api/patients/${id}/documents/${docId}`,{})).status,200);
+ assert.equal((await request(patient,`/api/patients/${id}/documents`)).body.documents.length,1);
+ assert.equal((await remove(id,docId)).status,200);
+ const reuploaded=await upload(id);assert.equal(reuploaded.status,201);assert.notEqual(reuploaded.body.document.id,docId);
+ assert.equal((await post(patient,`/api/patients/${id}/documents/${docId}`,{})).status,409);
+
+ assert.equal((await post(patient,`/api/patients/${id}/documents/${docId}/analyze`,{kind:'consultation'})).status,404);
+ assert.equal((await request(admin,`/reviews?patient=${id}`)).status,200);
+ assert.equal((await request(patient,'/reviews')).status,307);
+ const logout=await request(patient,'/api/auth/logout',{method:'POST',body:new URLSearchParams({csrfToken:await token(patient)}),headers:{origin:'null'}});assert.equal(logout.status,303);
+ assert.equal(new URL((await login(patient,patientEmail,patientPassword)).headers.get('location')).pathname,`/patients/${id}`);
+ const csrf=await token(admin);assert.equal((await request(admin,`/api/patients/${id}/grants`,{method:'PATCH',headers:{origin:'null','content-type':'application/json','x-csrf-token':csrf},body:JSON.stringify({userId})})).status,200);
+ assert.equal((await request(patient,`/api/patients/${id}`)).status,401);
+ assert.equal(new URL((await login(patient,patientEmail,patientPassword)).headers.get('location')).pathname,'/access-unavailable');
+ assert.ok((await request(patient,'/access-unavailable')).body.includes('Tu perfil aún no está disponible'));
+});
+
+test('edición y archivo conservan revisiones y relaciones; revisión IA guarda correcciones', {skip:!enabled||!localDb}, async()=>{
+ const admin=client();await login(admin,email,password);const suffix=randomUUID().slice(0,8);
+ const patch=async(path,data)=>request(admin,path,{method:'PATCH',headers:{origin:'null','content-type':'application/json','x-csrf-token':await token(admin)},body:JSON.stringify(data)});
+ const patient=(await post(admin,'/api/patients',{name:'Flujos '+suffix,authorizedBy:'Prueba',basis:'Sintético'})).body.patient.id;
+ const center=await post(admin,'/api/catalogs/centers',{name:'Centro '+suffix,city:'Ciudad A'});assert.equal(center.status,201);
+ assert.equal((await post(admin,'/api/catalogs/centers',{name:('Centro '+suffix).toUpperCase()})).status,409);
+ assert.equal((await patch('/api/catalogs/centers',{id:center.body.item.id,city:'Ciudad B'})).status,200);
+ assert.equal((await request(admin,'/api/catalogs/centers')).body.items.find(i=>i.id===center.body.item.id).city,'Ciudad B');
+ const med=(await post(admin,'/api/catalogs/medications',{name:'Medicación '+suffix})).body.item;
+ const use=(await post(admin,`/api/patients/${patient}/medications`,{medicationId:med.id,dose:'Original',state:'active'})).body.medication;
+ assert.equal((await patch(`/api/patients/${patient}/medications`,{id:use.id,version:1,dose:'Corregida',changeReason:'Corrección sintética'})).status,200);
+ assert.equal((await patch(`/api/patients/${patient}/medications`,{id:use.id,version:1,dose:'Obsoleta',changeReason:'Prueba conflicto'})).status,409);
+ const m=(await request(admin,`/api/patients/${patient}/medications`)).body.medications[0];assert.equal(m.dose,'Corregida');assert.equal(m.version,2);
+ assert.equal((await patch(`/api/patients/${patient}/medications`,{id:use.id,version:2,status:'void',changeReason:'Registro de prueba archivado'})).status,200);
+ assert.equal((await request(admin,`/api/patients/${patient}/medications`)).body.medications.length,0);
+ const type=(await request(admin,'/api/measurement-types')).body.types.find(t=>t.name==='Peso');
+ const measure=(await post(admin,`/api/patients/${patient}/measurements`,{typeId:type.id,valueKind:'number',originalValue:'60 kg',numericValue:'60',unit:'kg'})).body.measurement;
+ assert.equal((await patch(`/api/patients/${patient}/measurements`,{id:measure.id,version:1,numericValue:'61',originalValue:'61 kg',changeReason:'Corregir transcripción'})).status,200);
+ assert.equal((await patch('/api/measurement-types',{id:type.id,valueKind:'text'})).status,409);
+ assert.equal((await patch(`/api/patients/${patient}/measurements`,{id:measure.id,version:2,status:'void',changeReason:'Archivo sintético'})).status,200);
+ const form=new FormData();form.append('file',new File([`%PDF-1.4\n% draft ${suffix}\n%%EOF`],'revision.pdf',{type:'application/pdf'}));
+ const upload=await request(admin,`/api/patients/${patient}/documents`,{method:'POST',body:form,headers:{origin:'null','x-csrf-token':await token(admin)}});assert.equal(upload.status,201);const documentId=upload.body.document.id;
+ const draft={patientName:null,eventDate:null,doctorName:null,centerName:null,specialtyName:null,reason:null,symptoms:null,summary:'Original',findings:null,impression:null,conclusion:null,recommendations:null,followUp:null,evidence:[]};
+ const pool=new pg.Pool({connectionString:process.env.SMOKE_DATABASE_URL,max:1});try{
+ const actor=(await pool.query('SELECT id FROM users WHERE email=$1',[email])).rows[0].id;
+ const run=(await pool.query("INSERT INTO extraction_runs(patient_id,document_id,kind,status,model,schema_version,draft,original_draft,created_by) VALUES($1,$2,'consultation','review','synthetic',1,$3,$3,$4) RETURNING id",[patient,documentId,draft,actor])).rows[0].id;
+ const endpoint=`/api/patients/${patient}/documents/${documentId}/analyze`;
+ const saved=await patch(endpoint,{runId:run,reviewVersion:1,draft:{...draft,summary:'Corrección guardada'}});assert.equal(saved.status,200);assert.equal(saved.body.reviewVersion,2);
+ assert.equal((await patch(endpoint,{runId:run,reviewVersion:1,draft})).status,409);
+ const loaded=(await request(admin,endpoint)).body.runs[0];assert.equal(loaded.draft.summary,'Corrección guardada');assert.equal(loaded.originalDraft.summary,'Original');
+ assert.equal((await post(admin,`/api/patients/${patient}/extractions/${run}/confirm`,{reviewVersion:1,draft})).status,409);
+ const confirmed=await post(admin,`/api/patients/${patient}/extractions/${run}/confirm`,{reviewVersion:2,draft:loaded.draft});assert.equal(confirmed.status,200);
+ const again=await post(admin,`/api/patients/${patient}/extractions/${run}/confirm`,{reviewVersion:2,draft:loaded.draft});assert.equal(again.body.consultation.id,confirmed.body.consultation.id);
+ assert.equal((await request(admin,`/api/patients/${patient}/documents`)).body.documents[0].processingStatus,'confirmed');
+ assert.equal((await patch(`/api/patients/${patient}/consultations/${confirmed.body.consultation.id}`,{version:1,status:'void',changeReason:'Archivo de prueba'})).status,200);
+ assert.ok((await pool.query('SELECT count(*)::int AS n FROM clinical_fact_revisions WHERE patient_id=$1',[patient])).rows[0].n>=4);
  }finally{await pool.end()}
 });

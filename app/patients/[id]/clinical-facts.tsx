@@ -1,4 +1,5 @@
 'use client';
+import {ArchiveRecord} from '../../components/archive-record';
 import {useCallback,useEffect,useState} from 'react';
 import {useRouter} from 'next/navigation';
 import {conditionStateLabel,clinicalDate} from '../../lib/labels';
@@ -51,6 +52,6 @@ export function ClinicalFacts({patientId,role}:{patientId:string;role:'admin'|'p
  <div className="v-form-actions"><button className="v-button" disabled={busy}>{busy?'Guardando…':'Guardar '+section.singular}</button><button className="v-button v-secondary" type="button" disabled={busy} onClick={()=>setEditor(null)}>Cancelar</button></div>
  </form>}
  {loading?<p role="status" className="v-empty-inline">Cargando información…</p>:items[section.kind].length?items[section.kind].map(item=><article className="v-clinical-row" key={item.id}><div className="v-section-head"><strong>{item.name||item.substance||item.title}</strong>{role==='admin'&&<button className="v-link-button" onClick={()=>open(section.kind,item)} aria-label={'Editar '+(item.name||item.substance||item.title)}>Editar</button>}</div>
- {item.state&&<p>{conditionStateLabel(item.state)}{item.certainty?' · '+(item.certainty==='confirmed'?'Confirmada':item.certainty==='suspected'?'Sospecha':'Certeza no documentada'):''}</p>}{item.status==='draft'&&<small>Borrador privado</small>}{item.reaction&&<p>Reacción: {item.reaction}</p>}{item.severity&&<p>Gravedad: {item.severity}</p>}{(item.note||item.detail)&&<p>{item.note||item.detail}</p>}<small>{clinicalDate(item.documentedDate)||'Fecha no documentada'}{item.sourceNote?' · '+item.sourceNote:''}</small></article>):<p className="v-empty-inline">No hay {section.title.toLowerCase()} registrados.</p>}
+ {item.state&&<p>{conditionStateLabel(item.state)}{item.certainty?' · '+(item.certainty==='confirmed'?'Confirmada':item.certainty==='suspected'?'Sospecha':'Certeza no documentada'):''}</p>}{item.status==='draft'&&<small>Borrador privado</small>}{item.reaction&&<p>Reacción: {item.reaction}</p>}{item.severity&&<p>Gravedad: {item.severity}</p>}{(item.note||item.detail)&&<p>{item.note||item.detail}</p>}<small>{clinicalDate(item.documentedDate)||'Fecha no documentada'}{item.sourceNote?' · '+item.sourceNote:''}</small>{role==='admin'&&<ArchiveRecord endpoint={`/api/patients/${patientId}/${section.kind}`} payload={{id:item.id,version:item.version}} onSaved={()=>{void load();router.refresh()}}/>}</article>):<p className="v-empty-inline">No hay {section.title.toLowerCase()} registrados.</p>}
  </section>})}</>;
 }

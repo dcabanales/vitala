@@ -49,6 +49,7 @@ test('contrato de OpenAI: sin almacenamiento de respuesta y errores controlados'
     };
     const extracted=await analyzeMedicalDocument(args);
     assert.deepEqual(extracted.draft,draft);assert.equal(extracted.usage.input_tokens,12);
+    for(const [status,code,expected] of [[401,null,'AI_AUTH'],[403,null,'AI_ACCESS'],[404,null,'AI_MODEL'],[400,null,'AI_REQUEST'],[429,'insufficient_quota','AI_QUOTA']]){globalThis.fetch=async()=>new Response(JSON.stringify({error:{code}}),{status});await assert.rejects(analyzeMedicalDocument(args),new RegExp(expected));}
     globalThis.fetch=async()=>new Response('{}',{status:429});
     await assert.rejects(analyzeMedicalDocument(args),/AI_RATE/);
     globalThis.fetch=async()=>new Response(JSON.stringify({status:'completed',output:[{content:[{type:'output_text',text:'{'}]}]}),{status:200});

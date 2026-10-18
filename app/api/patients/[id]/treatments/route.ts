@@ -5,7 +5,7 @@ type Context={params:Promise<{id:string}>};
 export async function GET(req:Request,{params}:Context){try{
   const user=await requireUser(req),{id}=await params;await authorizePatient(user,id);
   const r=await query(`SELECT t.id,t.name,t.indication,t.start_date AS "startDate",t.end_date AS "endDate",t.state,t.status,t.instructions,
-    t.note,t.version,d.name AS "doctorName" FROM treatments t LEFT JOIN doctors d ON d.id=t.doctor_id
+    t.note,t.version,t.doctor_id AS "doctorId",d.name AS "doctorName" FROM treatments t LEFT JOIN doctors d ON d.id=t.doctor_id
     WHERE t.patient_id=$1 AND t.status<>'void' AND ($2='admin' OR t.status='published')
     ORDER BY (t.state='active') DESC,t.start_date DESC NULLS LAST,t.created_at DESC LIMIT 100`,[id,user.role]);
   return Response.json({treatments:r.rows},{headers:noCache});

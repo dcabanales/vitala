@@ -1,4 +1,5 @@
 import {checkOrigin,cookieName,createSession,settings,verifyPassword} from '../../../lib/auth';
+import {landingPath} from '../../../lib/patient-context';
 import {query,transaction} from '../../../lib/db';
 import {boundedRequest,failure} from '../../../lib/server';
 import {NextResponse} from 'next/server';
@@ -18,7 +19,7 @@ export async function POST(request:Request){try{
   });
   if(!allowed)return NextResponse.redirect(new URL('/login?error=rate',config.origin),303);
   const email=String(form.get('email')||'').trim().toLowerCase(),password=String(form.get('password')||'');
-  const found=await query<{id:string;password_hash:string}>(`SELECT id,password_hash FROM users WHERE email=$1 AND status='active'`,[email]);
+  const found=await query<{id:string;password_hash:string;email:string;role:'admin'|'patient'}>(`SELECT id,password_hash,email,role FROM users WHERE email=$1 AND status='active'`,[email]);
   const valid=found.rows[0]&&await verifyPassword(password,found.rows[0].password_hash);
   if(!valid)return NextResponse.redirect(new URL('/login?error=invalid',config.origin),303);
   const mfaCode=String(form.get('mfaCode')||'').trim();
@@ -34,7 +35,7 @@ export async function POST(request:Request){try{
     return !!used.rowCount;
   });
   if(!secondFactor)return NextResponse.redirect(new URL('/login?error=invalid',config.origin),303);
-  const response=NextResponse.redirect(new URL('/',config.origin),303);
+  const response=NextResponse.redirect(new URL(await landingPath(found.rows[0]),config.origin),303);
   response.headers.set('Cache-Control','no-store');
   response.cookies.set(cookieName(),await createSession(found.rows[0].id),{httpOnly:true,secure:config.secure,sameSite:'strict',path:'/',maxAge:8*3600});
   return response;

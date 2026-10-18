@@ -22,7 +22,7 @@ export async function POST(request:Request,{params}:Context){try{
 export async function PATCH(request:Request,{params}:Context){try{
  const user=await requireUser(request),{id}=await params;await authorizePatient(user,id,true);
  const req=await boundedRequest(request,16_000);
- const parsed=input.partial().extend({id:z.string().uuid(),version:z.number().int().positive(),changeReason:z.string().trim().min(1).max(500)}).strict().safeParse(await req.json());
+ const parsed=input.partial().extend({status:z.enum(['draft','published','void']).optional(),id:z.string().uuid(),version:z.number().int().positive(),changeReason:z.string().trim().min(1).max(500)}).strict().safeParse(await req.json());
  if(!parsed.success)throw new Error('VALIDATION');const p=parsed.data;
  const map:Record<string,string>={"kind": "kind", "title": "title", "detail": "detail", "documentedDate": "documented_date", "familyRelation": "family_relation", "documentId": "document_id", "status": "status"};
  const result=await transaction(async client=>{

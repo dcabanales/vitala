@@ -25,3 +25,17 @@ export async function PATCH(request:Request,{params}:Context){try{
       VALUES($1,'publish','document',$2,$3)`,[user.id,documentId,id]);return r.rows[0];
   });return Response.json({document:row},{headers:noCache});
 }catch(e){return failure(e)}}
+
+// Removing from the library preserves original sources and can be undone.
+export async function DELETE(request:Request,context:Context){return archive(request,context,true)}
+export async function POST(request:Request,context:Context){return archive(request,context,false)}
+async function archive(request:Request,{params}:Context,removed:boolean){try{
+ const user=await requireUser(request),{id,documentId}=await params;await authorizePatient(user,id,user.role==='admin');
+ await transaction(async client=>{
+  const doc=(await client.query('SELECT created_by,status FROM medical_documents WHERE patient_id=$1 AND id=$2 FOR UPDATE',[id,documentId])).rows[0];
+  if(!doc||(user.role!=='admin'&&doc.created_by!==user.id))throw Error('PATIENT');
+  if((await client.query("SELECT 1 FROM extraction_runs WHERE patient_id=$1 AND document_id=$2 AND status='running'",[id,documentId])).rowCount)throw Error('CONFLICT');
+  await client.query('UPDATE medical_documents SET archived_at=CASE WHEN $3 THEN now() ELSE NULL END,updated_at=now() WHERE patient_id=$1 AND id=$2',[id,documentId,removed]);
+  await client.query("INSERT INTO audit_events(actor_id,action,resource_type,resource_id,patient_id) VALUES($1,$2,'document',$3,$4)",[user.id,removed?'archive':'restore',documentId,id]);
+ });return Response.json({removed},{headers:noCache});
+}catch(e){return failure(e)}}

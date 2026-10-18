@@ -11,7 +11,7 @@ Neon aloja PostgreSQL y un bucket privado compatible con S3. Los datos de pacien
 
 ## Conectar Vitala
 
-Configura en Fly los secretos `DATABASE_URL`, `SESSION_SECRET`, `APP_ORIGIN`, `OBJECT_BUCKET`, `AWS_ENDPOINT_URL_S3`, `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` y `OPENAI_API_KEY`. `OBJECT_BUCKET` debe ser `vitala-documents`, y `APP_ORIGIN` debe ser la URL HTTPS real del despliegue. La configuración de producción está en `fly.v2.toml`; el `fly.toml` antiguo sigue sirviendo la instalación actual.
+Configura en Fly los secretos `DATABASE_URL`, `SESSION_SECRET`, `APP_ORIGIN`, `OBJECT_BUCKET`, `AWS_ENDPOINT_URL_S3`, `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` y `OPENAI_API_KEY`. `OBJECT_BUCKET` debe ser `vitala-documents`, y `APP_ORIGIN` debe ser la URL HTTPS real del despliegue. La configuración de producción está en `fly.toml` y `fly.v2.toml`; ambos usan PostgreSQL/S3 y ejecutan las migraciones pendientes al desplegar.
 
 Prueba primero la rama de Neon y el bucket con pacientes y documentos ficticios. Ejecuta migraciones, crea el administrador, comprueba acceso y aislamiento entre pacientes, carga/descarga privada, copia y restauración. Luego prueba la extracción con un documento ficticio y revisión humana. El cambio de `vitala.fly.dev` se hace solo cuando estas comprobaciones pasen y se haya guardado la imagen anterior para volver atrás.
 

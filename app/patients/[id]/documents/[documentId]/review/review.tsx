@@ -1,4 +1,5 @@
 'use client';
+import {DocumentPreview} from '../../../../../components/document-preview';
 import {ClinicalFields,consultationFields as sharedConsultationFields,examinationFields as sharedExaminationFields} from '../../../../../components/clinical-fields';
 import type {IdentityIssue} from '../../../../../lib/document-identity';
 import {useCallback,useEffect,useState} from 'react';
@@ -9,16 +10,16 @@ type ConsultationDraft={patientName:string|null;patientBirthDate?:string|null;pa
 type Measurement={typeName:string;originalValue:string;numericValue:string|null;unit:string|null;referenceRange:string|null};
 type ExaminationDraft={patientName:string|null;patientBirthDate?:string|null;patientIdentifier?:string|null;name:string|null;eventDate:string|null;doctorName:string|null;centerName:string|null;
   specialtyName:string|null;indication:string|null;findings:string|null;conclusion:string|null;measurements:Measurement[];evidence:Evidence[]};
-type Run={identityIssues?:IdentityIssue[];originalDraft?:{patientName?:string|null;patientBirthDate?:string|null;patientIdentifier?:string|null};id:string;kind:'consultation'|'examination';status:string;draft:ConsultationDraft|ExaminationDraft|null;
+type Run={measurementTypeIds?:(string|null)[]|null;reviewVersion:number;identityIssues?:IdentityIssue[];originalDraft?:{patientName?:string|null;patientBirthDate?:string|null;patientIdentifier?:string|null};id:string;kind:'consultation'|'examination';status:string;draft:ConsultationDraft|ExaminationDraft|null;
   warning:string|null;errorCode:string|null;consultationId:string|null;examinationId:string|null};
 type MeasurementType={id:string;name:string;valueKind:string;defaultUnit:string|null};
-export function ExtractionReview({patientId,documentId,initialKind}:{patientId:string;documentId:string;initialKind:'consultation'|'examination'}){
+export function ExtractionReview({patientId,documentId,initialKind,fileName,mimeType}:{fileName:string;mimeType:string;patientId:string;documentId:string;initialKind:'consultation'|'examination'}){
   const [run,setRun]=useState<Run|null>(null),[consultation,setConsultation]=useState<ConsultationDraft|null>(null);
   const [examination,setExamination]=useState<ExaminationDraft|null>(null),[types,setTypes]=useState<MeasurementType[]>([]);
   const [typeIds,setTypeIds]=useState<(string|null)[]>([]),[kindChoice,setKindChoice]=useState<'consultation'|'examination'>(initialKind);
   const [acknowledged,setAcknowledged]=useState<string[]>([]),[identityReason,setIdentityReason]=useState(''),[reviewed,setReviewed]=useState(false);
   const [loading,setLoading]=useState(true);
-  const [busy,setBusy]=useState(false),[error,setError]=useState('');
+  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
   const base=`/api/patients/${patientId}/documents/${documentId}/analyze`;
   const loadTypes=useCallback(async()=>{const response=await fetch('/api/measurement-types',{cache:'no-store'});
     if(!response.ok)throw Error('No se pudieron cargar los tipos de medición');
@@ -33,6 +34,7 @@ export function ExtractionReview({patientId,documentId,initialKind}:{patientId:s
   useEffect(()=>{load().catch(e=>setError(e.message)).finally(()=>setLoading(false));loadTypes().catch(e=>setError(e.message))},[load,loadTypes]);
   useEffect(()=>{
     if(!examination){setTypeIds([]);return}
+    if(run?.measurementTypeIds?.length===examination.measurements.length){setTypeIds(run.measurementTypeIds);return}
     setTypeIds(examination.measurements.map(m=>{
       const kind=m.numericValue!==null?'number':'text';
       const matches=types.filter(t=>t.name.toLocaleLowerCase('es')===m.typeName.toLocaleLowerCase('es')&&t.valueKind===kind);
@@ -41,11 +43,13 @@ export function ExtractionReview({patientId,documentId,initialKind}:{patientId:s
   },[run?.id,types]);
   async function csrf(){const response=await fetch('/api/auth/csrf',{cache:'no-store'});if(!response.ok)throw Error('No se pudo verificar la solicitud');return (await response.json()).token}
   async function analyze(){if(draft&&run?.status==='review'&&!window.confirm('Una nueva lectura reemplazará las correcciones de esta pantalla. ¿Continuar?'))return;setBusy(true);setError('');try{
-    const response=await fetch(base,{method:'POST',headers:{'Content-Type':'application/json','x-csrf-token':await csrf()},body:JSON.stringify({kind:kindChoice})});
+    const response=await fetch(base,{method:'POST',headers:{'Content-Type':'application/json','x-csrf-token':await csrf()},body:JSON.stringify({kind:kindChoice,replaceReview:run?.status==='review'})});
     const data=await response.json();if(!response.ok)throw Error(data.error);await load();
   }catch(e){setError(e instanceof Error?e.message:'No se pudo analizar')}finally{setBusy(false)}}
+  useEffect(()=>{if(run?.status!=='running')return;const timer=setInterval(()=>{void load().catch(e=>setError(e.message))},3000);return()=>clearInterval(timer)},[run?.status,load]);
+  async function saveDraft(){if(!run||!draft)return;setBusy(true);setError('');try{const r=await fetch(base,{method:'PATCH',headers:{'Content-Type':'application/json','x-csrf-token':await csrf()},body:JSON.stringify({runId:run.id,reviewVersion:run.reviewVersion,draft,measurementTypeIds:kindChoice==='examination'?typeIds:undefined})}),j=await r.json();if(!r.ok)throw Error(j.error);setRun({...run,reviewVersion:j.reviewVersion});setNotice('Correcciones guardadas. Puedes continuar la revisión más tarde.')}catch(e){setError(e instanceof Error?e.message:'No se pudieron guardar las correcciones')}finally{setBusy(false)}}
   async function confirm(){if(!run)return;setBusy(true);setError('');try{
-    const identity={identityAcknowledgements:acknowledged,identityReason};
+    const identity={reviewVersion:run.reviewVersion,identityAcknowledgements:acknowledged,identityReason};
     const body=run.kind==='examination'?{draft:examination,measurementTypeIds:typeIds,...identity}:{draft:consultation,...identity};
     const response=await fetch(`/api/patients/${patientId}/extractions/${run.id}/confirm`,{
       method:'POST',headers:{'Content-Type':'application/json','x-csrf-token':await csrf()},body:JSON.stringify(body)});
@@ -65,14 +69,14 @@ export function ExtractionReview({patientId,documentId,initialKind}:{patientId:s
   const draft=run?.kind==='examination'?examination:consultation;
   return <div className="v-review-layout"><section className="v-panel"><h2>Documento original</h2>
       <p className="v-muted">Compara cada campo con el archivo antes de confirmar.</p>
-      <a className="v-button v-secondary" href={`/api/patients/${patientId}/documents/${documentId}`} target="_blank" rel="noopener noreferrer">Abrir original</a>
+      <DocumentPreview name={fileName} mime={mimeType} href={`/api/patients/${patientId}/documents/${documentId}`}/>
     </section><section className="v-panel"><div className="v-section-head"><h2>Revisar y corregir datos</h2></div>
       <div className="v-toolbar"><label>Tipo de lectura<select value={kindChoice} onChange={event=>setKindChoice(event.target.value as 'consultation'|'examination')}>
         <option value="consultation">Consulta</option><option value="examination">Examen</option></select></label>
-        <button className="v-button" disabled={loading||busy||run?.status==='running'} onClick={analyze}>{busy?'Procesando…':run?'Volver a extraer del original':'Iniciar lectura con IA'}</button></div>
-      {loading&&<p className="v-muted" role="status">Cargando revisión…</p>}{error&&<p className="error" role="alert">{error}</p>}
-      {run?.status==='running'&&<p className="v-muted">La lectura está en curso. Vuelve a cargar si tarda demasiado.</p>}
-      {run?.status==='failed'&&<p className="v-muted">La lectura falló. El original sigue disponible.</p>}
+        <button className="v-button" disabled={loading||busy||run?.status==='running'||run?.status==='confirmed'} onClick={analyze}>{busy?'Procesando…':run?'Volver a extraer del original':'Iniciar lectura con IA'}</button></div>
+      {notice&&<p className="success" role="status">{notice}</p>}{loading&&<p className="v-muted" role="status">Cargando revisión…</p>}{error&&<p className="error" role="alert">{error}</p>}
+      {run?.status==='running'&&<p className="v-muted">La lectura está en curso. El estado se actualiza automáticamente.</p>}
+      {(run?.status==='failed'||run?.status==='interrupted')&&<p className="v-muted">La lectura falló. El original sigue disponible.</p>}
       {run?.status==='confirmed'&&<p className="success">Esta extracción ya fue confirmada. <a className="v-text-link" href={`/patients/${patientId}/${run.kind==='examination'?'exams':'consultations'}/${run.examinationId||run.consultationId}`}>Ver registro →</a></p>}
 
       {draft&&run?.status!=='confirmed'&&<><p className="v-note">Revisa y corrige los campos. La fecha y los datos ausentes pueden quedar vacíos.</p>
@@ -102,7 +106,7 @@ export function ExtractionReview({patientId,documentId,initialKind}:{patientId:s
         </section>}
         <details><summary>Evidencia del documento</summary>{draft.evidence.length?draft.evidence.map((e,index)=><blockquote className="v-evidence" key={index}>
           <strong>{e.field}{e.page?' · pág. '+e.page:''}</strong><p>{e.quote}</p></blockquote>):<p className="v-muted">No se extrajeron citas verificables.</p>}</details>
-        <label className="v-check"><input type="checkbox" checked={reviewed} onChange={e=>setReviewed(e.target.checked)}/>He comparado los datos con el original y revisado las correcciones.</label>
+        <button type="button" className="v-button v-secondary" disabled={busy||run?.status!=='review'} onClick={saveDraft}>Guardar correcciones para después</button><label className="v-check"><input type="checkbox" checked={reviewed} onChange={e=>setReviewed(e.target.checked)}/>He comparado los datos con el original y revisado las correcciones.</label>
         <button className="v-button" type="submit" disabled={busy||!identityReady||!reviewed||run?.status!=='review'||(run.kind==='examination'&&!examination?.name?.trim())}>
           Guardar {run?.kind==='examination'?'examen revisado':'consulta revisada'}</button></form>
       </>}
